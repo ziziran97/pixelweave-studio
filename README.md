@@ -1,10 +1,22 @@
 # PixelWeave Studio
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
+![Fabric.js](https://img.shields.io/badge/Fabric.js-7-5A67D8)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+
 一款轻量、专注单图工作流的浏览器图片编辑器，提供消除笔、标注、图层、指令改图与无透明通道 JPG 导出。
 
 > React 19 + Fabric.js 7 + TypeScript + Vite
 
 PixelWeave Studio 不依赖 Excalidraw。编辑器始终只有一张当前图片，图片尺寸就是画布尺寸；替换图片不会新增第二张底图。
+
+## 设计目标
+
+- **单图即画布**：不额外创建背景画布，不维护多张底图
+- **消除笔优先**：遮罩生成、接口调用和无接口测试模式开箱即用
+- **自然的标注交互**：文字通过点击创建，图形通过按下并拖拽创建
+- **适合二次开发**：后端地址集中在环境变量中，前端不暴露接口配置表单
 
 ## 已实现
 
@@ -18,13 +30,31 @@ PixelWeave Studio 不依赖 Excalidraw。编辑器始终只有一张当前图片
 - 图片替换、消除、指令改图和常规编辑均支持撤销/重做
 - 仅导出不含透明通道的 JPG
 
+## 工具交互
+
+| 工具 | 操作方式 |
+| --- | --- |
+| 涂抹消除 | 按住鼠标拖动绘制遮罩 |
+| 框选消除 | 按下并拖拽生成矩形选区 |
+| 圈选消除 | 按住鼠标自由勾画并闭合选区 |
+| 套索消除 | 逐点点击形成多边形；双击或按 `Enter` 闭合，按 `Esc` 取消 |
+| 文字 | 在图片目标位置单击后输入文字 |
+| 矩形、圆形、箭头 | 在图片上按下并拖拽生成对象 |
+| 指令改图 | 在图片下方输入指令，提交当前合成图、对象数据和指令 |
+
+常用快捷键：`Ctrl/Cmd + Z` 撤销，`Ctrl/Cmd + Shift + Z` 或 `Ctrl + Y` 重做。
+
 ## 启动
+
+请先安装近期 LTS 版本的 Node.js 和 npm。
 
 ```bash
 npm install
-copy .env.example .env
+cp .env.example .env
 npm run dev
 ```
+
+Windows PowerShell 可使用 `Copy-Item .env.example .env`。
 
 默认地址：`http://127.0.0.1:4175/`
 
@@ -68,11 +98,38 @@ objects=<除底图和消除遮罩外的对象 JSON 数组>
 1. 直接返回图片 Blob；
 2. JSON 返回 `url`、`imageUrl`、`resultUrl`、`image` 或 `base64`，字段也可以位于 `data` 下。
 
+## 无接口测试模式
+
+不配置 `VITE_ERASER_API_URL` 时仍可完整测试选区和导出流程：执行消除后，白色遮罩区域会直接覆盖到当前图片。这样可以在后端接口就绪前验证涂抹、框选、圈选、套索、撤销/重做及 JPG 导出。
+
+## 项目结构
+
+```text
+src/
+├── App.tsx              # 编辑器界面、Fabric 画布与交互状态
+├── config.ts            # 环境变量读取
+└── lib/
+    └── eraseApi.ts      # 消除和指令改图接口适配
+.env.example             # 可复制的接口配置模板
+```
+
 ## 生产构建
 
 ```bash
 npm run build
 ```
+
+构建产物位于 `dist/`，可以部署到任意静态站点服务。部署时请同时为图片源和后端接口配置正确的 CORS 策略。
+
+## 参与开发
+
+欢迎提交 Issue 和 Pull Request。提交前建议至少执行一次：
+
+```bash
+npm run build
+```
+
+请勿提交包含真实接口地址、令牌或其他敏感信息的 `.env` 文件。
 
 ## License
 
