@@ -24,6 +24,14 @@ export interface EditorMetadata {
   editorTextPadding?: number;
   editorTextRadius?: number;
   editorTextShadowColor?: string;
+  editorTextShadowEnabled?: boolean;
+  editorTextShadowBlur?: number;
+  editorTextShadowOffsetX?: number;
+  editorTextShadowOffsetY?: number;
+  editorTextStrokeEnabled?: boolean;
+  editorTextStrokeColor?: string;
+  editorTextStrokeWidth?: number;
+  editorTextBoldRestoreWeight?: string;
 }
 
 declare module "fabric" {
@@ -44,6 +52,7 @@ export type LayerItem = {
   locked: boolean;
   selected: boolean;
   transparent?: boolean;
+  textIssueWords?: string[];
   kind?: "rect" | "ellipse" | "brush";
   color?: string;
   thumbnailUrl?: string;
@@ -90,10 +99,13 @@ export type DocumentSnapshot = {
 };
 export type TextProperties = {
   fontFamily: string; fontSize: number; fill: string; fontWeight: string; fontStyle: string;
+  underline?: boolean; linethrough?: boolean;
+  opacity?: number;
   background: boolean; backgroundColor: string; backgroundPadding: number; backgroundRadius: number;
   textAlign: string; lineHeight: number; charSpacing: number;
   stroke: string; strokeWidth: number; shadowColor: string; shadowBlur: number;
   shadowOffsetX: number; shadowOffsetY: number;
+  shadowEnabled?: boolean; strokeEnabled?: boolean; boldRestoreWeight?: string;
 };
 export type PendingResult = {
   assetId: string; beforeUrl: string; afterUrl: string;
@@ -115,7 +127,9 @@ export type EditorView = {
   picking: boolean; colorEditing: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;
   canSubmit: boolean; canUpload: boolean;
   problemObjectId?: string;
+  problemObjectIds?: string[];
   selectedId?: string; selectedPurpose?: ObjectPurpose; text?: TextProperties;
+  textEditing?: boolean; textVertical?: boolean; textError?: string; textFontError?: string;
   masks: number; lassoPoints: number;
   hasMask: boolean; maskHidden: boolean;
   unfinishedSelection: boolean; canUndo: boolean; canRedo: boolean; dirty: boolean;

@@ -19,6 +19,7 @@ input, textarea, select { min-width: 0; color: #263c52; }
 .brand > span:last-child { display: flex; flex-direction: column; gap: 3px; }
 .brand strong { font-size: 18px; white-space: nowrap; }
 .brand small { font-size: 10px; color: #8998a8; }
+.brand .preview-label { color: #956b2b; }
 .top-actions, .top-right { display: flex; align-items: center; gap: 8px; }
 .top-right { justify-content: flex-end; }
 .top-actions button[aria-pressed=true] { color: #257ac7; background: #eaf4fd; }
@@ -49,6 +50,25 @@ button:not(:disabled):hover { filter: brightness(.97); }
 .tool-help { margin-top: auto; padding-top: 16px; }
 .text-style-scope { margin: 7px 0 12px; font-size: 12px; font-weight: 600; color: #526e88; }
 .text-style-scope + .field-help { margin-top: -5px; }
+.text-add-sticky { position: sticky; top: calc(-1 * var(--panel-padding)); z-index: 3; background: white; padding-top: 1px; }
+.text-add-sticky .full { margin-bottom: 10px; }
+.text-scope-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+.text-scope-row .text-style-scope { margin: 0; }
+.text-edit-link { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 4px 0; color: #287dcc; background: transparent; font-size: 11px; }
+.text-font-row { width: 100%; }
+.text-properties .text-font-row select { font-size: 13px; }
+.text-properties .text-font-row select[data-font-family="Alibaba Sans JP"] { font-size: 12px; }
+.text-properties .property-field { margin-bottom: 11px; gap: 5px; }
+.text-properties .property-grid { column-gap: 10px; }
+.text-format-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
+.text-format-row > div { display: flex; width: 100%; justify-content: space-between; gap: 4px; }
+.text-format-row button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: 1px solid transparent; border-radius: 6px; background: #f5f8fb; }
+.text-format-row button.selected { color: #287dcc; border-color: #b6d4ee; background: #eaf4fd; }
+.text-validation-error { margin: 0 0 12px; padding: 8px; border-radius: 6px; color: #a3372b; background: #fff1ed; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.text-validation-error .secondary-button { display: flex; margin-top: 6px; }
+.text-properties .text-operation-help { margin-bottom: 0; }
+.text-effects-summary { float: right; color: #7d8c9d; font-weight: 400; }
+.text-effects[open] .text-effects-summary { display: none; }
 .shortcut-help-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 22px; border: 1px solid var(--line); border-radius: 12px; color: #233348; box-shadow: 0 16px 60px #23334830; }
 .shortcut-help-dialog::backdrop { background: #1e30494d; }
 .shortcut-list { margin: 18px 0; font-size: 12px; }
@@ -263,6 +283,10 @@ summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px;
 .editor-closed { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f3f7fb; }
 .editor-closed h1 { font-size: 24px; } .editor-closed p { color: #708399; }
 .layer-card.has-problem { border-color: #d75a55; background: #fff3f1; }
+.layer-card.inspecting-problem { flex-wrap: wrap; }
+.layer-problem-details { flex: 0 0 100%; min-width: 0; padding: 4px 6px 2px; color: #a3433f; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.layer-problem-details p { margin: 0; }
+.layer-problem-details p + p { margin-top: 4px; color: #687c91; }
 
 /* Shared color dialog is outside disabled property fieldsets. */
 .color-palette .custom-color { display:flex; align-items:center; justify-content:center; gap:3px; padding:4px; background:#fff; color:#617488; }

@@ -51,14 +51,14 @@ export async function checkColorEditing(check: (value: boolean, message: string)
     check(text.shadow === null && textProperties(text).shadowColor === "#ff0000", "历史重载保留尚未启用的阴影颜色");
     await editor.duplicateSelected(); text = editor.canvas.getActiveObject() as Textbox;
     check(text.shadow === null && textProperties(text).shadowColor === "#ff0000", "复制文字保留尚未启用的阴影颜色");
-    await editor.updateText({ ...textProperties(text), shadowBlur: 8 });
+    await editor.updateText({ ...textProperties(text), shadowEnabled: true, shadowBlur: 8 });
     check(text.shadow?.color === "#ff0000", "随后启用阴影使用此前选择的颜色");
     // Older documents stored only Fabric's active shadow color.
     delete text.editorTextShadowColor;
     check(textProperties(text).shadowColor === "#ff0000", "旧文字仍从已有阴影读取颜色");
     const legacyCancel = editor.beginColorEdit("shadowColor")!; legacyCancel.preview("#00ff00"); legacyCancel.finish(false);
     check(text.editorTextShadowColor === undefined && textProperties(text).shadowColor === "#ff0000", "取消旧文字试色不添加元数据或改变阴影");
-    await editor.updateText({ ...textProperties(text), background: true, strokeWidth: 2, shadowBlur: 4 });
+    await editor.updateText({ ...textProperties(text), background: true, strokeEnabled: true, strokeWidth: 2, shadowEnabled: true, shadowBlur: 4 });
     for (const channel of ["fill", "backgroundColor", "stroke", "shadowColor"] as const) {
       const before = textProperties(text)[channel]; const edit = editor.beginColorEdit(channel)!;
       edit.preview("#abcdef"); check(textProperties(text)[channel] === "#abcdef", `文字 ${channel} 复用实时颜色预览`);

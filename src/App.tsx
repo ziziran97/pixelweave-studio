@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
 import { Brush, CircleHelp, Eraser, PanelLeftClose, RotateCcwSquare, Hand, ImagePlus, Layers3, Minus, MousePointer2, Plus, Redo2, Save, ScanSquare, SlidersHorizontal, Type, X, Undo2 } from "lucide-react";
 import { EditorController } from "./editor/EditorController";
+import { validatePreviewTexts } from "./editor/previewTextValidation";
 import { DEFAULT_ADJUSTMENTS } from "./types";
 import type { EditorView, ToolId } from "./types";
 import { DEFAULT_SHAPE } from "./editor/shape";
@@ -40,7 +41,8 @@ const EMPTY: EditorView = {
   picking: false, colorEditing: false, submitting: false, submissionStage: "", needsConfirmation: false, saved: false, closed: false, canSubmit: false, canUpload: false,
 };
 
-export default function App({ integration }: { integration?: EditorIntegration }) {
+export default function App({ integration, preview = false }: { integration?: EditorIntegration; preview?: boolean }) {
+  const previewOnly = !!validatePreviewTexts && preview && !integration;
   const canvasRef = useRef<HTMLCanvasElement>(null), overlayRef = useRef<HTMLCanvasElement>(null), viewportRef = useRef<HTMLDivElement>(null), fileRef = useRef<HTMLInputElement>(null);
   const [engine, setEngine] = useState<EditorController | null>(null);
   const [view, setView] = useState<EditorView>(EMPTY);
@@ -57,12 +59,12 @@ export default function App({ integration }: { integration?: EditorIntegration }
     // StrictMode cleanup can run before asynchronous canvas disposal. Defer the first mount.
     queueMicrotask(() => {
       if (cancelled || !canvasRef.current || !overlayRef.current || !viewportRef.current) return;
-      controller = new EditorController(canvasRef.current, overlayRef.current, viewportRef.current, setView, integration);
+      controller = new EditorController(canvasRef.current, overlayRef.current, viewportRef.current, setView, integration, previewOnly);
       setEngine(controller);
       void controller.initialize().then(() => { if (!cancelled) controller?.setTool("erase"); });
     });
     return () => { cancelled = true; controller?.dispose(); };
-  }, [integration]);
+  }, [integration, previewOnly]);
   const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
   const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking;
   const execute = () => { void engine?.executeErase(); };
@@ -99,15 +101,18 @@ export default function App({ integration }: { integration?: EditorIntegration }
   }, [view.propertiesRequest, view.selectionCount, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
   const settingsTitle = view.selectionCount > 1 ? `已选 ${view.selectionCount} 个图层` : panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
   const locateProblem = view.problemObjectId && view.layers.some(layer => layer.id === view.problemObjectId) ? () => {
+    const ids = (view.problemObjectIds ?? [view.problemObjectId!]).filter(id => view.layers.some(layer => layer.id === id));
+    const id = ids[(ids.indexOf(layerLocation?.id ?? "") + 1) % ids.length];
     engine?.zoomTo(view.zoom);
+    engine?.selectLayer(id);
     setLayersOpen(true);
-    setLayerLocation(previous => ({ id: view.problemObjectId!, request: (previous?.request ?? 0) + 1 }));
+    setLayerLocation(previous => ({ id, request: (previous?.request ?? 0) + 1 }));
   } : undefined;
 
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong></span></div>
+      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable</small>}</span></div>
       <div className="top-actions" role="group" aria-label="编辑与对比">
         <ActionButton below className="icon-button" aria-label="撤销" hint="撤销 Ctrl+Z" disabled={!view.canUndo} onClick={() => void engine?.undo()}><Undo2 /></ActionButton>
         <ActionButton below className="icon-button" aria-label="重做" hint="重做 Ctrl+Shift+Z" disabled={!view.canRedo} onClick={() => void engine?.undo(true)}><Redo2 /></ActionButton>
@@ -137,7 +142,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
             : panelKind === "erase" ? <>
               <EraserPanel view={view} engine={engine} locked={locked} execute={execute} />
             </> : panelKind === "adjust" ? engine && <AdjustmentsPanel view={view} engine={engine} disabled={locked} /> : <>
-            {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} />
+            {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} editing={view.textEditing} vertical={view.textVertical} error={view.textError} fontError={view.textFontError} />
               : panelKind === "draw" && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} /> : null}
           </>}
         </div>
@@ -174,9 +179,9 @@ export default function App({ integration }: { integration?: EditorIntegration }
       <LayersPanel view={view} engine={engine} disabled={locked} hidden={!layersOpen} locate={layerLocation} />
     </main>
     <input ref={fileRef} type="file" accept=".jpg,.jpeg" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
-    {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} />}
+    {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} previewOnly={previewOnly} />}
     {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} />}
-    {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
+    {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
     {helpOpen && <ShortcutHelp close={() => setHelpOpen(false)} />}
   </div>;
 }

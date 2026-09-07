@@ -1,0 +1,70 @@
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import App from "../src/App";
+import { createTextValidator } from "../src/integration";
+import { checkTextValidation, checkStandalonePreview } from "./text-validation";
+import { picture, settle, frame } from "./editing-tools";
+import "../src/styles.css";
+const reports: string[] = [];
+const check = (value: boolean, message: string) => { if (!value) throw new Error(message); reports.push(`PASS ${message}`); };
+const host = document.getElementById("test-root")!, root = createRoot(host);
+const paint = async () => { await frame(); await frame(); };
+const button = (name: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+let calls = 0, saves = 0;
+try {
+  await checkTextValidation(check);
+  await checkStandalonePreview(check);
+  root.render(createElement(App, { preview: true, integration: { initialImage: await picture("#e9eef3"), context: { taskId: "words-ui", imageId: "image" },
+    validateTexts: createTextValidator(async text => { calls++; return text === "Hidden copy" ? ["HiddenOnlyRestrictedTerm", "hidden-ban"] : ["ForbiddenWordExample", "restricted"]; }),
+    replace: async () => { saves++; return { status: "failed" as const, message: "测试，不保存" }; }, confirmResult: async () => ({ status: "pending" as const }), onClose: () => {} } }));
+  await settle(() => !!button("文字") && !button("文字").disabled); button("文字").click(); await paint(); button("添加文字").click();
+  await settle(() => !!host.querySelector('.layer-card[data-purpose="content"]'));
+  const input = async (value: string) => {
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-fabric="textarea"]')!;
+    textarea.value = value; textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" })); await paint();
+  };
+  await input("Hidden copy");
+  button("复制图层").click(); await settle(() => host.querySelectorAll('.layer-card[data-purpose="content"]').length === 2);
+  button("修改文字").click(); await paint(); await input("Visible copy");
+  const rows = [...host.querySelectorAll<HTMLElement>('.layer-card[data-purpose="content"]')];
+  rows[0].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
+  rows[1].querySelector<HTMLButtonElement>('.layer-controls button')!.click(); await paint();
+  rows[1].querySelectorAll<HTMLButtonElement>('.layer-controls button')[1].click(); await paint();
+  button("收起图层").click(); await paint();
+  const submit = () => host.querySelector<HTMLButtonElement>('.top-right .primary-button')!;
+  submit().click(); await settle(() => !!host.querySelector('.confirmation-dialog[open]'));
+  check(calls === 0, "实际确认弹窗出现前后均未提前请求违禁词接口");
+  check(!host.querySelector(".preview-label") && host.querySelector(".confirmation-dialog")!.textContent!.includes("替换后无法恢复"), "真实宿主优先，不显示演示标识或覆盖正式确认说明");
+  check(!host.textContent!.includes("不能包含中文"), "文字面板不再显示汉字语言限制提示");
+  host.querySelector<HTMLButtonElement>('.confirmation-dialog .primary-button')!.click();
+  await settle(() => host.querySelectorAll('.has-problem').length === 2);
+  check(calls === 2 && saves === 0 && !!button("展开图层"), "不同文案分别检测，命中多图层仍保留收起状态且未调用保存");
+  check(host.querySelector(".eraser-notice > span")?.textContent === "2 个文字图层的文案需修改。", "实际页面顶部仅汇总图层数，保留查看问题图层入口");
+  check(host.querySelector('.text-validation-error')?.textContent?.includes("ForbiddenWordExample") === true, "属性区沿用现有提示样式展示具体违禁词");
+  const locate = () => [...host.querySelectorAll<HTMLButtonElement>('.eraser-notice button')].find(item => item.textContent === "查看问题图层")!;
+  const zoom = host.querySelector('output')!.textContent;
+  locate().click(); await paint(); const firstId = (document.activeElement as HTMLElement).dataset.layerId;
+  const detail = () => rows[1].querySelector<HTMLElement>('.layer-problem-details');
+  check(firstId === rows[1].dataset.layerId && detail()?.textContent?.includes("本图层违禁词：HiddenOnlyRestrictedTerm、hidden-ban") === true && !detail()?.textContent?.includes("ForbiddenWordExample"), "隐藏锁定问题在本图层显示对应词，不混入另一图层的检测结果");
+  check(detail()?.textContent?.includes("显示并解锁后可编辑") === true && rows[0].classList.contains("selected"), "问题详情明确显示和解锁步骤，保持原有对象选择");
+  check(detail()!.scrollWidth <= detail()!.clientWidth, "问题图层内的长词换行且不撑宽图层面板");
+  locate().click(); await paint(); const secondId = (document.activeElement as HTMLElement).dataset.layerId;
+  check(!!firstId && !!secondId && firstId !== secondId && host.querySelector('output')!.textContent === zoom, "查看问题图层循环定位多个问题并保留缩放");
+  check(rows[1].textContent!.includes("已隐藏 · 已锁定"), "定位隐藏锁定问题不自动显示或解锁");
+  check(!host.querySelector('.layer-problem-details'), "定位回可编辑问题文字后只保留当前属性提示，不堆放旧图层详情");
+  locate().click(); await paint();
+  rows[1].querySelector<HTMLButtonElement>('.layer-controls button')!.click(); await paint();
+  check(detail()?.textContent?.includes("解锁后可编辑") === true && !detail()?.textContent?.includes("显示并解锁"), "显示后更新问题图层的解锁提示");
+  rows[1].querySelectorAll<HTMLButtonElement>('.layer-controls button')[1].click(); await paint();
+  check(detail()?.textContent?.includes("选择此图层后可编辑") === true, "显示解锁后保留具体词并引导选择该图层");
+  rows[1].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
+  check(!detail() && host.querySelector('.text-validation-error')!.textContent!.includes("HiddenOnlyRestrictedTerm") && !host.querySelector('.text-validation-error')!.textContent!.includes("ForbiddenWordExample"), "选择问题图层后左侧接续显示该图层的词，右侧详情收起");
+  button("修改文字").click(); await paint(); await input("Updated copy");
+  rows[1].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
+  check(!rows[1].classList.contains("has-problem") && !detail() && !host.querySelector('.text-validation-error'), "修改问题文案后该图层的旧标记与具体词一起失效");
+  button("撤销").click(); await settle(() => !!host.querySelector('.text-validation-error')); await paint();
+  check(host.querySelector('.text-validation-error')!.textContent!.includes("HiddenOnlyRestrictedTerm"), "撤销恢复原文案后恢复该图层对应违禁词");
+  const warning = host.querySelector<HTMLElement>('.text-validation-error')!;
+  check(warning.scrollWidth <= warning.clientWidth && warning.getBoundingClientRect().width > 0, "具体违禁词在属性栏内换行，不产生横向溢出");
+} catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
+finally { document.getElementById("results")!.textContent = reports.join("\n") + `\n\n共 ${reports.length} 项`; }

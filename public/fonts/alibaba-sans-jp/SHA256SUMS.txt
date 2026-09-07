@@ -1,0 +1,3 @@
+18f661c38b01181cc77b6516e95839216379055f3c095fbfbf03e00bea1fcbfd  AlibabaSansJP-Regular.woff2
+8dde67ad799fc5c27e7b7d1fbecc00725bf63c1b4ecd11b825f447e1f8b1ce82  AlibabaSansJP-Medium.woff2
+ba6b8fbd461fc1a6da44f81d4a24a91f2f0df065f2911769d375ce06856f8206  AlibabaSansJP-Bold.woff2

@@ -1,9 +1,10 @@
-import { Canvas, Ellipse, Rect } from "fabric";
+import { Canvas, Ellipse, Rect, Textbox } from "fabric";
 import type { FabricObject, Point } from "fabric";
 
 /** Keep empty shape interiors out of pointer targeting, without changing their controls. */
 export class DrawingCanvas extends Canvas {
   override _checkTarget(object: FabricObject, pointer: Point): boolean {
+    if (object instanceof Textbox && object.opacity === 0) return false;
     if (!(object instanceof Rect || object instanceof Ellipse)) return super._checkTarget(object, pointer);
     if (!object.visible || !object.evented || object.opacity === 0) return false;
     if (object.editorFilled !== false) return super._checkTarget(object, pointer);

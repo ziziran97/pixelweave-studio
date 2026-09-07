@@ -10,7 +10,7 @@ export const CONFIRMATION_COPY: Record<ConfirmationKind, { title: string; messag
   switch: { title: "切换编辑图片？", message: "当前未保存的编辑内容和待采用结果将丢失。", cancel: "取消", accept: "切换图片" },
 };
 
-export function ConfirmationDialog({ confirmation, answer }: { confirmation: EditorConfirmation; answer: (id: string, accepted: boolean) => void }) {
+export function ConfirmationDialog({ confirmation, answer, previewOnly = false }: { confirmation: EditorConfirmation; previewOnly?: boolean; answer: (id: string, accepted: boolean) => void }) {
   const dialog = useRef<HTMLDialogElement>(null), cancel = useRef<HTMLButtonElement>(null), answered = useRef(false);
   const copy = CONFIRMATION_COPY[confirmation.kind];
   const respond = (accepted: boolean) => { if (!answered.current) { answered.current = true; answer(confirmation.id, accepted); } };
@@ -19,7 +19,7 @@ export function ConfirmationDialog({ confirmation, answer }: { confirmation: Edi
     onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}
     onCancel={event => { event.preventDefault(); respond(false); }}>
     <div className="confirmation-heading"><h2 id="confirmation-title">{copy.title}</h2><button className="icon-button" aria-label="取消并关闭弹窗" onClick={() => respond(false)}><X size={18} /></button></div>
-    <p id="confirmation-message">{copy.message}</p>
+    <p id="confirmation-message">{previewOnly && confirmation.kind === "replace" ? "本次仅演示文案检测，不会保存或替换任务图片，编辑内容将保留。" : copy.message}</p>
     <div className="dialog-actions"><button ref={cancel} className="secondary-button" onClick={() => respond(false)}>{copy.cancel}</button><button className="primary-button" onClick={() => respond(true)}>{copy.accept}</button></div>
   </dialog>;
 }

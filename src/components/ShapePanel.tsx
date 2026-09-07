@@ -38,6 +38,6 @@ export function ShapePanel({ view, engine, disabled }: { view: EditorView; engin
       <PropertySlider label="矩形圆角滑块" min={0} max={view.shapeRadiusMax ?? 500} value={view.shape.radius}
         change={radius => engine.updateShape({ radius }, false)} commit={() => engine.finishPropertyEdit()} />
     </div>}
-    <p className="field-help">{view.selectedId ? `拖动调整位置，控制点调整尺寸或旋转。再次点击${label}可继续绘制。` : view.tool === view.shapeKind ? `拖动绘制${label}，松手后可继续画。按住 Shift 画${view.shapeKind === "rect" ? "正方形" : "正圆"}。` : `点击已有${label}可调整属性。`}</p>
+    <p className="field-help">{view.selectedId ? `拖动调整位置，控制点调整尺寸或旋转。旋转接近 90° 倍数时自动吸附。再次点击${label}可继续绘制。` : view.tool === view.shapeKind ? `拖动绘制${label}，松手后可继续画。按住 Shift 画${view.shapeKind === "rect" ? "正方形" : "正圆"}。` : `点击已有${label}可调整属性。`}</p>
   </fieldset>;
 }

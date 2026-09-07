@@ -10,8 +10,8 @@ import type { ImageAsset } from "./assets";
 import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumentContent, uid } from "./model";
 import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from "./mask";
 import { makeSurface, renderDocument } from "./render";
-import { ensureFont, importFont } from "./fonts";
-import { applyTextProperties, textProperties, DEFAULT_TEXT } from "./text";
+import { ensureFont } from "./fonts";
+import { applyTextProperties, textProperties, DEFAULT_TEXT, isVerticalText } from "./text";
 import { textPlacement } from "./textPlacement";
 import { SelectionGesture } from "./SelectionGesture";
 import { ContentTextbox } from "./ContentTextbox";
@@ -19,6 +19,8 @@ import { ContentBrush } from "./ContentBrush";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { applyShapeProperties, shapeProperties, rectRadiusLimit, syncRectRadius, DEFAULT_SHAPE } from "./shape";
 import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } from "../integration";
+import { textCheckIssues } from "../integration";
+import { validatePreviewTexts } from "./previewTextValidation";
 import type { ConfirmationKind, EditorConfirmation, WorkspaceId } from "../types";
 
 function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
@@ -74,6 +76,10 @@ export class EditorController {
   private shapeDefaults = { ...DEFAULT_SHAPE };
   private textDefaults = { ...DEFAULT_TEXT };
   private lastTextAdd?: { id: string; generation: number; at: number };
+  private emptyTexts = new Set<Textbox>();
+  private textComposition?: Textbox;
+  private textInputEvents?: AbortController;
+  private fontRetry?: { generation: number; selectedId?: string; message: string; run: () => Promise<void> };
   private source: "online" | "upload" = "online";
   private nameCounts: Record<string, number> = {};
   private colorPick?: { canvas: HTMLCanvasElement; apply: (color: string) => void; cancel?: () => void };
@@ -89,6 +95,8 @@ export class EditorController {
   private savedRecord?: string;
   private closed = false;
   private problemObjectId?: string;
+  private textIssues = new Map<string, { text: string; generation: number; words: string[] }>();
+  private textIssueNotice?: string;
   private cursor?: PointData;
   private panning?: PointData;
   private space = false;
@@ -100,11 +108,10 @@ export class EditorController {
   private maskVersion = 0;
   private committedMaskKey = "";
   private originalElement?: HTMLImageElement;
-  private fontFaces: FontFace[] = [];
   private observer: ResizeObserver;
   private previewFrame = 0;
 
-  constructor(element: HTMLCanvasElement, private overlay: HTMLCanvasElement, private viewport: HTMLElement, private onChange: (view: EditorView) => void, private integration?: EditorIntegration) {
+  constructor(element: HTMLCanvasElement, private overlay: HTMLCanvasElement, private viewport: HTMLElement, private onChange: (view: EditorView) => void, private integration?: EditorIntegration, private preview = false) {
     this.canvas = new DrawingCanvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false, targetFindTolerance: 4,
       preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
     this.canvas.on("selection:created", () => this.selectionChanged());
@@ -131,7 +138,27 @@ export class EditorController {
       this.emit();
     });
     this.canvas.on("object:rotating", () => this.emit());
-    this.canvas.on("text:editing:exited", () => this.commit());
+    this.canvas.on("text:editing:entered", ({ target }) => {
+      this.textInputEvents?.abort(); this.textInputEvents = new AbortController();
+      const options = { signal: this.textInputEvents.signal };
+      target.hiddenTextarea?.addEventListener("compositionstart", () => {
+        if (target instanceof Textbox) this.textComposition = target;
+        this.emit();
+      }, options);
+      target.hiddenTextarea?.addEventListener("compositionend", () => {
+        this.textComposition = undefined; queueMicrotask(() => this.emit());
+      }, options);
+      this.emit();
+    });
+    this.canvas.on("text:editing:exited", ({ target }) => {
+      this.textInputEvents?.abort(); this.textComposition = undefined;
+      if (target instanceof Textbox && !target.text.trim()) {
+        this.emptyTexts.add(target);
+        // Fabric still dispatches object:modified after editing:exited. Remove
+        // only once it has finished that dispatch and completed deselection.
+        queueMicrotask(() => this.removeEmptyTexts());
+      } else this.commit();
+    });
     this.canvas.on("text:changed", () => this.emit());
     this.canvas.on("path:created", ({ path }) => {
       if (this.locked || this.tool !== "draw") { this.canvas.remove(path); return; }
@@ -206,6 +233,20 @@ export class EditorController {
     if (!this.hasMask && !this.selection.draft) this.operation = "add";
     const selected = this.canvas.getActiveObjects();
     const single = selected.length === 1 ? selected[0] : undefined;
+    const problems = this.addedTexts().filter(item => {
+      const issue = this.textIssues.get(item.id);
+      return issue?.generation === this.generation && issue.text === item.text;
+    });
+    const issueSummary = problems.length ? this.textIssueSummary(problems.length) : "文案已修改，请再次点击「替换图片」检测";
+    if (this.textIssueNotice && (this.notice === this.textIssueNotice ||
+      (this.noticePresentation !== "persistent" && issueSummary !== this.textIssueNotice))) {
+      // A changed issue count supersedes a transient action toast, but not another error.
+      if (issueSummary !== this.notice) this.notice = issueSummary;
+      this.noticePresentation = problems.length ? "persistent" : "transient";
+      this.textIssueNotice = problems.length ? issueSummary : undefined;
+    }
+    const textIssue = single instanceof Textbox && problems.some(item => item.id === single.editorId) ? this.textIssues.get(single.editorId!) : undefined;
+    if (this.fontRetry && (this.fontRetry.generation !== this.generation || this.fontRetry.selectedId !== single?.editorId)) this.fontRetry = undefined;
     const view: EditorView = {
       ready: this.ready, busy: this.busy, task: !!this.job, notice: this.notice, noticeId: this.noticeId, noticePresentation: this.noticePresentation, tool: this.tool, eraseMode: this.selection.mode,
       workspace: this.workspace, drawingTool: this.lastDrawingTool, propertiesRequest: this.propertiesRequest,
@@ -213,12 +254,17 @@ export class EditorController {
       zoom: this.canvas.getZoom(), size: this.size,
       layers: this.canvas.getObjects().filter(object => object.editorId).map(object => ({ id: object.editorId!, name: object instanceof Textbox ? object.text.replace(/\s+/g, " ").trim().slice(0, 24) || "空白文字" : object.editorName ?? "图层",
         role: object.editorRole ?? "shape", purpose: object.editorPurpose ?? "content", visible: object.visible, locked: !!object.editorLocked,
-        selected: selected.includes(object), transparent: (object instanceof Rect || object instanceof Ellipse) && object.opacity === 0,
+        selected: selected.includes(object), transparent: (object instanceof Rect || object instanceof Ellipse || object instanceof Textbox) && object.opacity === 0,
+        textIssueWords: problems.some(item => item.id === object.editorId) ? [...this.textIssues.get(object.editorId!)!.words] : undefined,
         kind: object instanceof Rect ? "rect" as const : object instanceof Ellipse ? "ellipse" as const : object instanceof Path ? "brush" as const : undefined,
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
       text: single instanceof Textbox ? textProperties(single) : this.workspace === "text" && !selected.length ? { ...this.textDefaults } : undefined,
+      textEditing: single instanceof Textbox && single.isEditing,
+      textVertical: single instanceof Textbox && isVerticalText(single),
+      textError: single instanceof Textbox && single !== this.textComposition && textIssue ? `包含违禁词：${textIssue.words.join("、")}，请修改后再次替换。` : undefined,
+      textFontError: this.workspace === "text" ? this.fontRetry?.message : undefined,
       shape: single instanceof Rect || single instanceof Ellipse ? shapeProperties(single) : { ...this.shapeDefaults },
       shapeRadiusMax: single instanceof Rect ? rectRadiusLimit(single) : undefined,
       shapeKind: single instanceof Rect ? "rect" : single instanceof Ellipse ? "circle" : this.workspace === "draw" && this.lastDrawingTool !== "draw" ? this.lastDrawingTool : undefined,
@@ -228,7 +274,8 @@ export class EditorController {
       canSubmit: !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft && this.contentDirty,
       canUpload: this.ready && !this.confirmation && !this.busy && !this.submitting && !this.savedRecord && !this.closed && !this.colorPick && !this.colorEdit && !this.drawingInProgress,
       confirmation: this.confirmation,
-      problemObjectId: this.problemObjectId,
+      problemObjectId: problems[0]?.id ?? this.problemObjectId,
+      problemObjectIds: problems.length ? problems.map(item => item.id) : this.problemObjectId ? [this.problemObjectId] : [],
       masks: this.masks.length,
       lassoPoints: this.selection.mode === "lasso" ? this.selection.draft?.points.length ?? 0 : 0,
       hasMask: this.hasMask, maskHidden: this.maskHidden,
@@ -242,6 +289,7 @@ export class EditorController {
   }
 
   private commit() {
+    if (this.emptyTexts.size) return;
     if (this.disposed || !this.ready || this.busy || this.job || this.pending || this.submitting || this.savedRecord || this.closed) return;
     this.propertyEdit = false;
     if (this.history.push(this.snapshot())) { this.revision++; this.problemObjectId = undefined; }
@@ -378,7 +426,34 @@ export class EditorController {
     this.configure(); this.emit();
   }
 
-  private finishText() { const object = this.canvas.getActiveObject(); if (object instanceof Textbox && object.isEditing) object.exitEditing(); }
+  private finishText() {
+    const object = this.canvas.getActiveObject();
+    if (object instanceof Textbox && object.isEditing) object.exitEditing();
+    this.removeEmptyTexts();
+  }
+  private removeEmptyTexts() {
+    if (!this.emptyTexts.size || this.disposed) return;
+    const empty = [...this.emptyTexts].filter(text => !text.isEditing && !text.text.trim() && this.canvas.getObjects().includes(text));
+    this.emptyTexts.clear();
+    if (!empty.length) return;
+    this.changingSelection = true;
+    try { this.canvas.remove(...empty); }
+    finally { this.changingSelection = false; }
+    this.notice = "空文字已删除，可撤销恢复";
+    this.configure(); this.commit();
+  }
+  editSelectedText() {
+    if (this.locked || this.gestureActive) return;
+    const text = this.canvas.getActiveObject();
+    if (!(text instanceof Textbox) || text.editorLocked || !text.visible) return;
+    this.tool = "text"; this.workspace = "text"; this.configure();
+    text.enterEditing(); text.hiddenTextarea?.focus({ preventScroll: true }); this.emit();
+  }
+  async retryTextFont() {
+    const retry = this.fontRetry;
+    if (!retry || this.locked || retry.generation !== this.generation || retry.selectedId !== this.canvas.getActiveObject()?.editorId || this.workspace !== "text") return;
+    this.notice = ""; this.fontRetry = undefined; await retry.run();
+  }
   private invalidateMaskPreview() { this.maskVersion++; this.committedMaskKey = ""; }
   private cancelDraft() {
     this.gestureActive = false; this.pointerId = undefined;
@@ -603,19 +678,46 @@ export class EditorController {
     return this.canvas.getObjects().flatMap(object => object instanceof Textbox && object.text.trim()
       ? [{ id: object.editorId!, text: object.text }] : []);
   }
+  private textIssueSummary(count: number) {
+    return `${count} 个文字图层的文案需修改。`;
+  }
   async submitReplacement() {
     if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || !this.contentDirty) return;
     if (!await this.confirmAction("replace")) return;
-    if (!this.integration) { this.notice = "替换服务尚未接入，当前草稿已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
     this.finishText(); this.commit();
-    const generation = this.generation, texts = this.addedTexts(), run = ++this.submissionRun;
+    if (!this.contentDirty) { this.notice = "空文字已删除，当前图片无需替换"; this.emit(); return; }
+    if (!this.integration && !(this.preview && validatePreviewTexts)) { this.notice = "替换服务尚未接入，当前草稿已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
+    const generation = this.generation, revision = this.revision, texts = this.addedTexts(), run = ++this.submissionRun;
     this.submitting = true; this.submissionStage = "正在检查新增文案…"; this.configure(); this.emit();
-    const current = () => !this.disposed && generation === this.generation && run === this.submissionRun;
+    const current = () => !this.disposed && generation === this.generation && revision === this.revision && run === this.submissionRun;
     try {
       if (texts.length) {
-        const checked = await this.integration.validateTexts(texts, { ...this.integration.context });
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const checked = await Promise.race([
+          Promise.resolve().then(() => this.integration
+            ? this.integration.validateTexts(texts.map(item => ({ ...item })), { ...this.integration.context })
+            : validatePreviewTexts!(texts))
+            .catch(() => { throw new Error("文案检测失败，请再次点击「替换图片」重试"); }),
+          new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("文案检测超时，请再次点击「替换图片」重试")), 15000); }),
+        ]).finally(() => clearTimeout(timeout));
         if (!current()) return;
-        if (checked.passed !== true) { this.finishSubmissionFailure(checked.message || "新增文案检查未通过", checked.objectId); return; }
+        const issues = textCheckIssues(checked, texts);
+        this.textIssues = new Map(issues.map(issue => [issue.objectId, { text: texts.find(item => item.id === issue.objectId)!.text, generation, words: issue.words }]));
+        this.textIssueNotice = undefined; this.problemObjectId = undefined;
+        if (checked.passed !== true) {
+          if (issues.length) {
+            const message = this.textIssueSummary(issues.length);
+            this.finishSubmissionFailure(message, issues[0].objectId);
+            this.problemObjectId = undefined;
+            this.notice = message; this.textIssueNotice = message; this.noticePresentation = "persistent"; this.emit();
+          } else this.finishSubmissionFailure(checked.message || "新增文案检查未通过", checked.objectId);
+          return;
+        }
+      }
+      if (!this.integration) {
+        this.submissionRun++; this.submitting = false; this.submissionStage = "";
+        this.notice = texts.length ? "文案检测通过。当前为演示，未保存到任务。" : "当前为演示，未保存到任务。";
+        this.noticePresentation = "persistent"; this.configure(); this.emit(); return;
       }
       this.submissionStage = "正在合成并校验图片…"; this.emit();
       const image = await renderDocument(this.snapshot(), this.assets, "final");
@@ -699,7 +801,6 @@ export class EditorController {
     if (this.confirmation?.id !== id || !this.confirmationResolve) return;
     const resolve = this.confirmationResolve; this.confirmationResolve = undefined; resolve(accepted);
   }
-  getFontFamilies() { return this.fontFaces.map(face => face.family); }
   undoLassoPoint() {
     if (this.locked || this.selection.mode !== "lasso" || !this.selection.draft) return;
     this.selection.undoPoint();
@@ -719,6 +820,9 @@ export class EditorController {
     selected.forEach(object => {
       if (object && (object.editorPurpose === "content" || object instanceof ActiveSelection)) object.set({ borderColor: "#287dcc", borderOpacityWhenMoving: 1,
         cornerColor: "#ffffff", cornerStrokeColor: "#287dcc", transparentCorners: false });
+      // Reapply editing assistance after selection, clone and history restore.
+      // Keep the existing free rotation of a multi-selection unchanged.
+      if (object?.editorPurpose === "content") object.set({ snapAngle: 90, snapThreshold: 5 });
     });
     const selection = editable && (this.tool === "select" || this.tool === "text");
     this.canvas.selection = selection; this.canvas.skipTargetFind = !selection;
@@ -859,9 +963,10 @@ export class EditorController {
     const active = this.canvas.getActiveObject();
     const properties = active instanceof Textbox ? textProperties(active) : { ...this.textDefaults };
     this.finishPropertyEdit(); this.finishText(); this.cancelDraft(); this.tool = "text"; this.workspace = "text";
+    this.fontRetry = undefined;
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try {
-      await ensureFont(properties.fontFamily, properties.fontWeight);
+      await ensureFont(properties.fontFamily, properties.fontWeight, properties.fontStyle);
       if (this.disposed || token !== this.generation) return;
       const visibleArea = () => {
         const [zoom, , , , x, y] = this.canvas.viewportTransform;
@@ -870,8 +975,8 @@ export class EditorController {
       };
       let area = visibleArea();
       if (!point && (area.right <= area.left || area.bottom <= area.top)) { this.fit(); area = visibleArea(); }
-      const text = new ContentTextbox("双击编辑文字", { left: point?.x ?? 0, top: point?.y ?? 0, originX: "left", originY: "top",
-        width: Math.min(420, this.size.width * .42), fontSize: Math.round(Math.max(24, this.size.width * .035)), fontFamily: "Microsoft YaHei", fill: this.color,
+      const text = new ContentTextbox("Your text", { left: point?.x ?? 0, top: point?.y ?? 0, originX: "left", originY: "top",
+        width: Math.min(420, this.size.width * .42), fontSize: properties.fontSize, fontFamily: properties.fontFamily, fill: this.color,
         splitByGrapheme: true, editorId: uid("text"), editorName: "文案", editorRole: "text", editorPurpose: "content" });
       applyTextProperties(text, properties);
       if (!point) {
@@ -885,7 +990,12 @@ export class EditorController {
       this.notice = `已添加文字，当前共 ${this.canvas.getObjects().filter(object => object instanceof Textbox).length} 段；可直接输入或拖动调整位置`;
       this.busy = false; this.configure(); this.commit(); text.enterEditing(); text.selectAll();
       this.lastTextAdd = { id: text.editorId!, generation: this.generation, at: performance.now() };
-    } catch (error) { this.report(error); }
+    } catch (error) {
+      if (!this.disposed && token === this.generation) {
+        this.fontRetry = { generation: token, selectedId: this.canvas.getActiveObject()?.editorId, message: (error as Error).message, run: () => this.addText(point) };
+        this.report(error);
+      }
+    }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
   }
 
@@ -912,7 +1022,9 @@ export class EditorController {
     if (this.locked) return;
     const object = this.canvas.getObjects().find(item => item.editorId === id);
     if (!object || object.editorPurpose === "base" || object.editorLocked || !object.visible) return;
-    this.finishPropertyEdit(); this.finishText(); this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.selectionChanged();
+    this.finishPropertyEdit(); this.finishText();
+    if (!this.canvas.getObjects().includes(object)) return;
+    this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.selectionChanged();
   }
   updateLayer(id: string, patch: { visible?: boolean; locked?: boolean }) {
     if (this.locked) return;
@@ -922,6 +1034,7 @@ export class EditorController {
     const selected = this.canvas.getActiveObjects();
     const affected = selected.includes(object);
     if (affected) this.finishText();
+    if (!this.canvas.getObjects().includes(object)) return;
     // Release the selection before changing membership so grouped coordinates survive.
     const removeFromSelection = affected && (patch.visible === false || patch.locked === true);
     const remaining = selected.filter(item => item !== object);
@@ -943,6 +1056,7 @@ export class EditorController {
     const towardsTop = direction === "up" || direction === "top";
     if (index < 0 || (towardsTop ? index === content.length - 1 : index === 0)) return;
     this.finishText();
+    if (!this.canvas.getObjects().includes(object)) return;
     if (direction === "top") this.canvas.bringObjectToFront(object);
     else if (direction === "bottom") this.canvas.sendObjectToBack(object);
     else if (direction === "up") this.canvas.bringObjectForward(object);
@@ -976,20 +1090,50 @@ export class EditorController {
     const text = this.canvas.getActiveObject();
     if (!(text instanceof Textbox)) { if (this.workspace === "text" && !this.canvas.getActiveObjects().length) { this.textDefaults = { ...values }; this.emit(); } return; }
     if (text.editorLocked) return;
-    this.finishText(); this.busy = true; this.configure(); this.emit(); const token = this.generation;
-    try { await ensureFont(values.fontFamily, values.fontWeight); if (!this.disposed && token === this.generation) { applyTextProperties(text, values); this.textDefaults = { ...values }; this.canvas.requestRenderAll(); } }
-    catch (error) { this.report(error); }
+    this.finishText();
+    if (!this.canvas.getObjects().includes(text)) { this.textDefaults = { ...values }; this.emit(); return; }
+    if (this.fontRetry) this.notice = "";
+    this.fontRetry = undefined; this.busy = true; this.configure(); this.emit(); const token = this.generation;
+    try {
+      await ensureFont(values.fontFamily, values.fontWeight, values.fontStyle);
+      if (!this.disposed && token === this.generation && this.canvas.getObjects().includes(text)) {
+        applyTextProperties(text, values); this.textDefaults = { ...values }; this.canvas.requestRenderAll();
+      }
+    } catch (error) {
+      if (!this.disposed && token === this.generation) {
+        this.fontRetry = { generation: token, selectedId: text.editorId, message: (error as Error).message, run: () => this.updateText(values) };
+        this.report(error);
+      }
+    }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.commit(); } }
   }
-  async addFont(file: File) {
-    if (this.locked) return undefined;
-    this.busy = true; this.configure(); this.emit();
-    try {
-      const loaded = await importFont(file);
-      if (this.disposed) { document.fonts.delete(loaded.face); return undefined; }
-      this.fontFaces.push(loaded.face); this.notice = "字体已载入，仅在当前编辑会话可用"; return loaded.family;
-    } catch (error) { this.report(error); return undefined; }
-    finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
+  updateTextOpacity(value: number, commit = true) {
+    if (this.locked || this.gestureActive) return;
+    this.finishText();
+    const opacity = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 100;
+    const text = this.canvas.getActiveObject();
+    if (!(text instanceof Textbox)) {
+      if (this.workspace === "text" && !this.canvas.getActiveObjects().length) {
+        this.textDefaults = { ...this.textDefaults, opacity }; this.emit();
+      }
+      return;
+    }
+    if (text.editorLocked) return;
+    if (!commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
+    text.set("opacity", opacity / 100);
+    this.textDefaults = textProperties(text);
+    this.canvas.requestRenderAll();
+    if (commit) this.commit(); else this.emit();
+  }
+  toggleTextOrientation() {
+    if (this.locked || this.gestureActive) return;
+    this.finishText(); this.finishPropertyEdit();
+    const text = this.canvas.getActiveObject();
+    if (!(text instanceof Textbox) || text.editorLocked || !text.visible) return;
+    const center = text.getCenterPoint();
+    text.set("angle", isVerticalText(text) ? 0 : 90);
+    text.setPositionByOrigin(center, "center", "center"); text.setCoords();
+    this.canvas.requestRenderAll(); this.commit();
   }
   setAdjustments(values: ImageAdjustments, commit = false) {
     if (this.locked) return;
@@ -1283,6 +1427,7 @@ export class EditorController {
     window.removeEventListener("beforeunload", this.beforeUnload);
     cancelAnimationFrame(this.previewFrame); this.previewCanvas.width = this.previewCanvas.height = 0; this.committedMaskCanvas.width = this.committedMaskCanvas.height = 0;
     if (this.pending) { URL.revokeObjectURL(this.pending.beforeUrl); URL.revokeObjectURL(this.pending.afterUrl); }
-    this.fontFaces.forEach(face => document.fonts.delete(face)); this.assets.dispose(); void this.canvas.dispose();
+    this.textInputEvents?.abort(); this.emptyTexts.clear(); this.fontRetry = undefined;
+    this.assets.dispose(); void this.canvas.dispose();
   }
 }

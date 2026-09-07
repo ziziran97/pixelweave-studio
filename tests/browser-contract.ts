@@ -4,6 +4,7 @@ import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
 import { checkSelectionInteractions } from "./selection-interactions";
 import { checkRequestLifecycle } from "./request-lifecycle";
+import { checkRotation } from "./rotation";
 import { checkEditingTools, checkTextWorkspace, checkWorkspacePersistence } from "./editing-tools";
 import { checkReplacementFlow } from "./replacement-flow";
 import { checkDrawingRefinements } from "./drawing-refinements";
@@ -100,6 +101,7 @@ try {
   await checkAdjustments(check);
   await checkTextWorkspace(check);
   await checkWorkspacePersistence(check);
+  await checkRotation(check);
   await checkReplacementFlow(check);
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { assets.dispose(); document.getElementById("results")!.textContent = reports.join("\n"); }

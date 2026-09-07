@@ -14,6 +14,6 @@ export function DrawingPanel({ view, engine, disabled }: { view: EditorView; eng
         change={value => view.drawing ? engine.updateDrawing({ width: value }, false) : engine.setDrawSize(value)} commit={() => engine.finishPropertyEdit()} />
     </div>
     <ColorField label="画笔颜色" value={view.drawing?.color ?? view.color} channel="drawing" engine={engine} />
-    <p className="field-help">{view.drawing ? "拖动调整位置，控制点调整尺寸或旋转。再次点击画笔可继续绘制。" : view.tool === "draw" ? "按住拖动绘制，按住 Shift 画直线。每笔独立，可选中修改或删除。" : "点击已有笔画可修改颜色和粗细。"}</p>
+    <p className="field-help">{view.drawing ? "拖动调整位置，控制点调整尺寸或旋转。旋转接近 90° 倍数时自动吸附。再次点击画笔可继续绘制。" : view.tool === "draw" ? "按住拖动绘制，按住 Shift 画直线。每笔独立，可选中修改或删除。" : "点击已有笔画可修改颜色和粗细。"}</p>
   </fieldset>;
 }

@@ -2,10 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import type { TextProperties } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { ColorField } from "./ColorField";
-import { Plus } from "lucide-react";
-import { FONT_OPTIONS } from "../editor/fonts";
+import { Plus, Bold, Italic, Underline, Strikethrough, createLucideIcon, Pencil } from "lucide-react";
+import { FONT_FAMILIES, JP_FONT_FAMILY, fontDefinition, fontWeight, supportsItalic } from "../editor/fonts";
+import { toggleTextBold } from "../editor/text";
+import { ActionButton } from "./ActionButton";
+import { PropertySlider } from "./PropertySlider";
 
-export function NumberField({ label, value, min, max, step = 1, unit, cancelOnEscape = false, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; cancelOnEscape?: boolean; onChange: (value: number) => void }) {
+const TextOrientation = createLucideIcon("TextOrientation", [
+  ["path", { d: "M5 5v14m-3-3 3 3 3-3", key: "vertical" }],
+  ["path", { d: "M9 5h11M14.5 5v14", key: "letter" }],
+]);
+
+export function NumberField({ label, value, min, max, step = 1, unit, showRangeHint = false, cancelOnEscape = false, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; showRangeHint?: boolean; cancelOnEscape?: boolean; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   const cancelled = useRef(false);
   useEffect(() => setDraft(String(value)), [value]);
@@ -16,7 +24,7 @@ export function NumberField({ label, value, min, max, step = 1, unit, cancelOnEs
     setDraft(String(next)); if (next !== value) onChange(next);
   };
   const input = <input aria-label={label} type="number" value={draft} min={min} max={max} step={step}
-    title={cancelOnEscape ? "回车或失焦生效，Esc 取消本次输入" : undefined}
+    title={cancelOnEscape ? `${showRangeHint ? `${min}–${max}${unit ? ` ${unit}` : ""}；` : ""}回车或失焦生效，Esc 取消本次输入` : undefined}
     onChange={event => { cancelled.current = false; setDraft(event.target.value); }} onBlur={commit} onKeyDown={event => {
       if (event.nativeEvent.isComposing) return;
       if (cancelOnEscape && event.key === "Escape") {
@@ -26,56 +34,88 @@ export function NumberField({ label, value, min, max, step = 1, unit, cancelOnEs
   return <label className="property-field"><span>{label}</span>{unit ? <span className="property-number-value">{input}<span>{unit}</span></span> : input}</label>;
 }
 
-export function TextPanel({ text, engine, disabled, selected }: { text: TextProperties; engine: EditorController; disabled: boolean; selected: boolean }) {
-  const [fonts, setFonts] = useState<string[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
+export function TextPanel({ text, engine, disabled, selected, editing, vertical, error, fontError }: {
+  text: TextProperties; engine: EditorController; disabled: boolean; selected: boolean;
+  editing?: boolean; vertical?: boolean; error?: string; fontError?: string;
+}) {
   const update = (patch: Partial<TextProperties>) => void engine.updateText({ ...text, ...patch });
-  const allFonts = [...new Set([...FONT_OPTIONS, ...fonts, ...engine.getFontFamilies(), text.fontFamily])];
+  const weight = fontWeight(text.fontWeight, text.fontFamily);
+  const family = fontDefinition(text.fontFamily) ?? FONT_FAMILIES[0];
+  const italic = supportsItalic(text.fontFamily, weight);
+  const spacingPx = Math.round(text.charSpacing * text.fontSize / 1000 * 100) / 100;
+  const opacity = text.opacity ?? 100;
+  const activeEffects = [opacity < 100 && (opacity === 0 ? "完全透明" : `${opacity}% 不透明`), text.strokeEnabled && "描边", text.shadowEnabled && "阴影"].filter(Boolean).join("、");
   return <fieldset disabled={disabled} className="text-properties">
-    <button className="primary-button full" aria-label="添加文字" onClick={() => void engine.addText()}><Plus size={17} />添加文字</button>
-    <p className="text-style-scope">{selected ? "当前文字属性" : "新文字样式"}</p>
-    {!selected && <p className="field-help">以下样式用于下一次添加，不影响已有文字。</p>}
-    <label className="property-field"><span>字体</span><select aria-label="字体" value={text.fontFamily} onChange={event => update({ fontFamily: event.target.value })}>{allFonts.map(font => <option key={font}>{font}</option>)}</select></label>
-    <div className="property-grid">
-      <NumberField label="字号" value={text.fontSize} min={8} max={500} onChange={fontSize => update({ fontSize })} />
-      <label className="property-field"><span>对齐</span><select aria-label="对齐" value={text.textAlign} onChange={event => update({ textAlign: event.target.value })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></label>
+    <div className="text-add-sticky"><button className="primary-button full" aria-label="添加文字" onClick={() => void engine.addText()}><Plus size={17} />添加文字</button></div>
+    <div className="text-scope-row"><p className="text-style-scope">{selected ? "当前文字属性" : "新文字样式"}</p>
+      {selected && !editing && <button className="text-edit-link" aria-label="修改文字" onClick={() => engine.editSelectedText()}><Pencil size={13} />修改文字</button>}
     </div>
-    <div className="toggle-grid text-style-toggles">
-      <button aria-label="加粗" aria-pressed={text.fontWeight === "bold" || text.fontWeight === "700"} className={text.fontWeight === "bold" || text.fontWeight === "700" ? "selected" : ""} onClick={() => update({ fontWeight: text.fontWeight === "bold" || text.fontWeight === "700" ? "normal" : "bold" })}><b>B</b> 加粗</button>
-      <button aria-label="斜体" aria-pressed={text.fontStyle === "italic"} className={text.fontStyle === "italic" ? "selected" : ""} onClick={() => update({ fontStyle: text.fontStyle === "italic" ? "normal" : "italic" })}><i>I</i> 斜体</button>
+    {error && <p className="text-validation-error" role="status">{error}</p>}
+    {fontError && <div className="text-validation-error" role="status"><span>{fontError}</span><button className="secondary-button" onClick={() => void engine.retryTextFont()}>重试字体加载</button></div>}
+    <div className="text-font-row">
+      <label className="property-field"><span>字体</span><select aria-label="字体" data-font-family={family.family} title={`${family.label} ${family.weights.find(item => item.value === weight)?.label}`} value={`${family.family}:${weight}`}
+        onChange={event => {
+          const [fontFamily, fontWeight] = event.target.value.split(":");
+          update({ fontFamily, fontWeight, boldRestoreWeight: undefined, fontStyle: supportsItalic(fontFamily, fontWeight) ? text.fontStyle : "normal" });
+        }}>
+        {FONT_FAMILIES.map(font => <optgroup key={font.family} label={font.label}>{font.weights.map(item => <option key={item.value} value={`${font.family}:${item.value}`} style={{ fontFamily: font.family, fontWeight: Number(item.value) }}>{font.label} {item.label}</option>)}</optgroup>)}
+      </select></label>
+    </div>
+    <div className="text-format-row">
+      <div role="group" aria-label="文字样式">
+        <ActionButton floating hint="加粗；再次点击恢复此前字重" aria-label="加粗" aria-pressed={weight === "700"} className={weight === "700" ? "selected" : ""} onClick={() => void engine.updateText(toggleTextBold(text))}><Bold size={18} /></ActionButton>
+        <ActionButton floating hint={italic ? "斜体" : text.fontFamily === JP_FONT_FAMILY ? "日文字体暂无斜体" : "Black 暂无斜体，请选择其他字重"} aria-label="斜体" disabled={!italic} aria-pressed={text.fontStyle === "italic"} className={text.fontStyle === "italic" ? "selected" : ""} onClick={() => update({ fontStyle: text.fontStyle === "italic" ? "normal" : "italic" })}><Italic size={18} /></ActionButton>
+        <ActionButton floating hint="下划线" aria-label="下划线" aria-pressed={!!text.underline} className={text.underline ? "selected" : ""} onClick={() => update({ underline: !text.underline })}><Underline size={18} /></ActionButton>
+        <ActionButton floating hint="删除线" aria-label="删除线" aria-pressed={!!text.linethrough} className={text.linethrough ? "selected" : ""} onClick={() => update({ linethrough: !text.linethrough })}><Strikethrough size={18} /></ActionButton>
+        <ActionButton floating hint={!selected ? "选中文字后可切换横版／竖版" : vertical ? "切换横版（0°）" : "切换竖版（顺时针 90°）"} aria-label="竖版" aria-pressed={!!vertical} disabled={!selected} className={vertical ? "selected" : ""} onClick={() => engine.toggleTextOrientation()}><TextOrientation size={18} /></ActionButton>
+      </div>
+    </div>
+    <div className="property-grid" role="group" aria-label="字号与对齐">
+      <NumberField showRangeHint label="字号" value={text.fontSize} min={8} max={500} unit="px" cancelOnEscape onChange={fontSize => update({ fontSize, charSpacing: text.charSpacing * text.fontSize / fontSize })} />
+      <label className="property-field"><span>对齐</span><select aria-label="对齐" value={text.textAlign}
+        title={text.textAlign === "justify-left" ? "文本框内两端对齐；段落末行保持起始对齐" : "文本框内对齐"}
+        onChange={event => update({ textAlign: event.target.value })}>
+        <option value="left">{vertical ? "上对齐" : "左对齐"}</option>
+        <option value="center">{vertical ? "垂直居中" : "居中"}</option>
+        <option value="right">{vertical ? "下对齐" : "右对齐"}</option>
+        <option value="justify-left">两端对齐</option>
+      </select></label>
+    </div>
+    <div className="property-grid" role="group" aria-label="字距与行距">
+      <NumberField showRangeHint label="字距" value={spacingPx} min={-20} max={100} step={.1} unit="px" cancelOnEscape onChange={value => update({ charSpacing: value / text.fontSize * 1000 })} />
+      <NumberField showRangeHint label="行距" value={text.lineHeight} min={.6} max={3} step={.05} unit="倍" cancelOnEscape onChange={lineHeight => update({ lineHeight })} />
     </div>
     <ColorField label="文字颜色" value={text.fill} channel="fill" engine={engine} />
     <label className="check-field"><input type="checkbox" checked={text.background} onChange={event => update({ background: event.target.checked })} />背景填充</label>
     {text.background && <div className="background-settings">
       <ColorField label="背景颜色" value={text.backgroundColor} channel="backgroundColor" engine={engine} />
       <div className="property-grid">
-        <NumberField label="背景留白" value={text.backgroundPadding} min={0} max={200} onChange={backgroundPadding => update({ backgroundPadding })} />
-        <NumberField label="背景圆角" value={text.backgroundRadius} min={0} max={200} onChange={backgroundRadius => update({ backgroundRadius })} />
+        <NumberField showRangeHint label="背景留白" value={text.backgroundPadding} min={0} max={200} unit="px" cancelOnEscape onChange={backgroundPadding => update({ backgroundPadding })} />
+        <NumberField showRangeHint label="背景圆角" value={text.backgroundRadius} min={0} max={200} unit="px" cancelOnEscape onChange={backgroundRadius => update({ backgroundRadius })} />
       </div>
     </div>}
-    <details><summary>更多设置</summary>
-      <div className="property-grid">
-        <NumberField label="行距倍数" value={text.lineHeight} min={.6} max={3} step={.1} onChange={lineHeight => update({ lineHeight })} />
-        <NumberField label="字距" value={text.charSpacing} min={-200} max={1000} step={10} onChange={charSpacing => update({ charSpacing })} />
+    <details className="text-effects"><summary>更多效果{activeEffects && <span className="text-effects-summary">{activeEffects}</span>}</summary>
+      <div className="shape-number-control">
+        <NumberField showRangeHint label="不透明度" value={opacity} min={0} max={100} unit="%" cancelOnEscape onChange={value => engine.updateTextOpacity(value)} />
+        <PropertySlider label="文字不透明度滑块" min={0} max={100} value={opacity}
+          change={value => engine.updateTextOpacity(value, false)} commit={() => engine.finishPropertyEdit()} />
       </div>
-      <label className="check-field"><input type="checkbox" checked={text.strokeWidth > 0} onChange={event => update({ strokeWidth: event.target.checked ? 2 : 0 })} />文字描边</label>
-      {text.strokeWidth > 0 && <>
-        <NumberField label="描边粗细" value={text.strokeWidth} min={1} max={30} onChange={strokeWidth => update({ strokeWidth })} />
+      <p className="field-help">{opacity === 0 ? selected ? "文字完全透明，可调整不透明度恢复。" : "当前为 0%，新添加的文字将不可见。" : "文字、背景、描边和阴影一起调整。"}</p>
+      <label className="check-field"><input type="checkbox" checked={text.strokeEnabled ?? text.strokeWidth > 0} onChange={event => update({ strokeEnabled: event.target.checked })} />文字描边</label>
+      {text.strokeEnabled && <>
+        <NumberField showRangeHint label="描边粗细" value={text.strokeWidth} min={1} max={30} unit="px" cancelOnEscape onChange={strokeWidth => update({ strokeWidth })} />
         <ColorField label="描边颜色" value={text.stroke} channel="stroke" engine={engine} />
       </>}
-      <div className="property-grid">
-        <NumberField label="阴影模糊" value={text.shadowBlur} min={0} max={100} onChange={shadowBlur => update({ shadowBlur })} />
-        <NumberField label="阴影水平偏移" value={text.shadowOffsetX} min={-100} max={100} onChange={shadowOffsetX => update({ shadowOffsetX })} />
-        <NumberField label="阴影垂直偏移" value={text.shadowOffsetY} min={-100} max={100} onChange={shadowOffsetY => update({ shadowOffsetY })} />
-      </div>
-      <ColorField label="阴影颜色" value={text.shadowColor.startsWith("#") ? text.shadowColor : "#000000"} channel="shadowColor" engine={engine} />
-      <button className="secondary-button full" onClick={() => fileRef.current?.click()}>加载本地字体</button>
-      <p className="field-help">字体仅在当前编辑中使用。字距单位为千分之一字号。</p>
+      <label className="check-field"><input type="checkbox" checked={!!text.shadowEnabled} onChange={event => update({ shadowEnabled: event.target.checked })} />文字阴影</label>
+      {text.shadowEnabled && <>
+        <ColorField label="阴影颜色" value={text.shadowColor.startsWith("#") ? text.shadowColor : "#000000"} channel="shadowColor" engine={engine} />
+        <NumberField showRangeHint label="阴影模糊" value={text.shadowBlur} min={0} max={100} unit="px" cancelOnEscape onChange={shadowBlur => update({ shadowBlur })} />
+        <div className="property-grid">
+          <NumberField showRangeHint label="水平偏移" value={text.shadowOffsetX} min={-100} max={100} unit="px" cancelOnEscape onChange={shadowOffsetX => update({ shadowOffsetX })} />
+          <NumberField showRangeHint label="垂直偏移" value={text.shadowOffsetY} min={-100} max={100} unit="px" cancelOnEscape onChange={shadowOffsetY => update({ shadowOffsetY })} />
+        </div>
+      </>}
     </details>
-    <input ref={fileRef} hidden type="file" accept=".woff,.woff2,.ttf,.otf" onChange={async event => {
-      const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
-      const family = await engine.addFont(file); if (family) { setFonts(previous => [...previous, family]); await engine.updateText({ ...text, fontFamily: family }); }
-    }} />
-    <p className="field-help">双击修改文字，Enter 换行；拖动左右控制点调整文本框宽度。</p>
+    <p className="field-help text-operation-help">{editing ? "Enter 换行，点击空白处结束输入。" : selected ? `${vertical ? "双击修改文字；拖动移动，上下控制点调整长度。" : "双击修改文字；拖动移动，左右控制点调整宽度。"}旋转接近 90° 倍数时自动吸附。` : "添加后可直接输入。"}</p>
   </fieldset>;
 }

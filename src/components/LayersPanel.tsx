@@ -40,11 +40,12 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
     <p className="layer-legend">{baseOnly ? "当前仅预览底图，新增内容已保留。" : "底图固定在下方，隐藏图层不参与成图。"}</p>
     <div ref={listRef} className="layer-list">
       {view.layers.map(layer => {
-        const base = layer.purpose === "base", problem = view.problemObjectId === layer.id;
+        const base = layer.purpose === "base", problem = view.problemObjectId === layer.id || view.problemObjectIds?.includes(layer.id);
         const Icon = layer.role === "image" ? Image : layer.role === "text" ? Type : layer.kind === "rect" ? RectangleHorizontal : layer.kind === "ellipse" ? Circle : Brush;
         const status = [problem && "文案需修改", base && "底图 · 固定", !layer.visible && "已隐藏", layer.locked && !base && "已锁定", layer.transparent && "完全透明"].filter(Boolean).join(" · ");
         const reason = base ? "底图固定，不可选择" : !layer.visible && layer.locked ? "显示并解锁后可编辑" : !layer.visible ? "显示后可编辑" : layer.locked ? "解锁后可编辑" : undefined;
-        return <div key={layer.id} tabIndex={-1} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
+        const showProblemDetails = problem && locate?.id === layer.id && !layer.selected;
+        return <div key={layer.id} tabIndex={-1} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}${showProblemDetails ? " inspecting-problem" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
           <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => engine?.selectLayer(layer.id)} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
             <span className={`layer-thumb role-${layer.role}`}>
               {layer.thumbnailUrl ? <img src={layer.thumbnailUrl} alt="" /> : <Icon aria-hidden="true" />}
@@ -55,6 +56,10 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
           {!base && <div className="layer-controls">
             <ActionButton floating hint={layer.visible ? "隐藏图层，不参与成图" : "显示图层"} aria-label={`${layer.visible ? "隐藏" : "显示"}${layer.name}`} disabled={disabled} onClick={() => engine?.updateLayer(layer.id, { visible: !layer.visible })}>{layer.visible ? <Eye /> : <EyeOff />}</ActionButton>
             <ActionButton floating hint={layer.locked ? "解锁图层，继续编辑" : "锁定图层，防止误编辑"} className={layer.locked ? "is-locked" : undefined} aria-label={`${layer.locked ? "解锁" : "锁定"}${layer.name}`} disabled={disabled} onClick={() => engine?.updateLayer(layer.id, { locked: !layer.locked })}>{layer.locked ? <Lock /> : <Unlock />}</ActionButton>
+          </div>}
+          {showProblemDetails && <div className="layer-problem-details" role="status">
+            <p>{layer.textIssueWords?.length ? `本图层违禁词：${layer.textIssueWords.join("、")}` : "本图层文案需修改"}</p>
+            <p>{reason ?? "选择此图层后可编辑"}</p>
           </div>}
         </div>;
       })}

@@ -98,13 +98,13 @@ export async function settle(ready: () => boolean) {
   for (let i = 0; i < 120; i++) { if (ready()) return; await frame(); }
   throw new Error("等待编辑状态超时");
 }
-export function createEditor(integration?: EditorIntegration) {
+export function createEditor(integration?: EditorIntegration, preview = false) {
   const host = document.createElement("div"); host.style.cssText = "position:relative;width:800px;height:600px";
   const canvas = document.createElement("canvas"), overlay = document.createElement("canvas");
   overlay.style.cssText = "position:absolute;inset:0;pointer-events:none";
   host.append(canvas, overlay); document.body.append(host);
   let view!: EditorView;
-  const editor = new EditorController(canvas, overlay, host, value => { view = value; }, integration);
+  const editor = new EditorController(canvas, overlay, host, value => { view = value; }, integration, preview);
   const mouse = (type: string, x: number, y: number, extra: MouseEventInit = {}) => {
     const bounds = editor.canvas.upperCanvasEl.getBoundingClientRect(), v = editor.canvas.viewportTransform;
     (type === "mousedown" ? editor.canvas.upperCanvasEl : document).dispatchEvent(new MouseEvent(type, {
@@ -233,12 +233,12 @@ export async function checkEditingTools(check: (condition: boolean, message: str
 
     editor.setTool("text"); await editor.addText({ x: 70, y: 120 }); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
     let text = editor.canvas.getActiveObject() as ContentTextbox;
-    text.text = "商品文案\n第二行"; text.exitEditing(); text.initDimensions();
+    text.text = "Product copy\nSecond line"; text.exitEditing(); text.initDimensions();
     await editor.updateText({ ...state().text!, fontSize: 24, fontStyle: "italic", background: true, backgroundColor: "#ffffff", backgroundPadding: 14, backgroundRadius: 6 });
     const textId = text.editorId!;
     check(text instanceof ContentTextbox && !text.controls.tl && !!text.controls.ml && !!text.controls.mtr,
       "文字左右控制点改宽度，保留旋转且不提供拉伸字号控制点");
-    check(state().layers.some(layer => layer.name === "商品文案 第二行"), "文字图层名称跟随实际文案摘要");
+    check(state().layers.some(layer => layer.name === "Product copy Second line"), "文字图层名称跟随实际文案摘要");
     const width = text.width, height = text.height;
     await editor.duplicateSelected();
     const duplicate = editor.canvas.getActiveObject() as Textbox;
@@ -252,7 +252,7 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     await confirm(() => editor.submitReplacement());
     const background = await pixelAt(submitted.image, 63, 115);
     check(background.slice(0, 3).every(value => value > 245), "文字四周背景留白实际进入最终 JPG，未被缓存裁切");
-    check(submitted.texts.some(value => value.id === textId && value.text === "商品文案\n第二行"), "提交包含完整新增文案及稳定对象标识");
+    check(submitted.texts.some(value => value.id === textId && value.text === "Product copy\nSecond line"), "提交包含完整新增文案及稳定对象标识");
     editor.updateLayer(textId, { visible: false }); await confirm(() => editor.submitReplacement());
     check(submitted.texts.some(value => value.id === textId), "隐藏新增文字仍参与完整文案校验");
     const hiddenPixel = await pixelAt(submitted.image, 63, 115);

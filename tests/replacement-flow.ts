@@ -24,12 +24,12 @@ export async function checkReplacementFlow(check: (condition: boolean, message: 
   try {
     await editor.initialize(); editor.setTool("text"); await editor.addText({ x: 40, y: 40 }); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
     const text = editor.canvas.getActiveObject() as Textbox;
-    text.set("text", "待检查文案"); text.exitEditing();
+    text.set("text", "Review this copy"); text.exitEditing();
     await confirm(() => editor.submitReplacement());
     check(validateCalls === 1 && replaceCalls === 0 && !state().submitting && state().selectedId === text.editorId,
       "新增文案命中时定位对象并保留草稿，不发送保存请求");
     blocked = false; await confirm(() => editor.submitReplacement());
-    check(state().submitting && state().needsConfirmation && !state().canSubmit && texts[0].text === "待检查文案",
+    check(state().submitting && state().needsConfirmation && !state().canSubmit && texts[0].text === "Review this copy",
       "保存结果未知时保持处理状态和文案，不允许重复提交");
     const firstId = latest.submissionId, size = state().size.width, before = editor.canvas.toJSON();
     await editor.requestClose(); await editor.uploadReplacement(new File([await picture("#ffffff", 300, 200)], "other.jpg"));
