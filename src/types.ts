@@ -54,22 +54,29 @@ export type DocumentSize = {
   height: number;
 };
 
+export type ImageFilter = "none" | "clear" | "bright" | "soft" | "vivid" | "warm" | "cool" | "mono" | "sepia";
 export type ImageAdjustments = {
   brightness: number;
   contrast: number;
   saturation: number;
-  blur: number;
-  grayscale: boolean;
-  sepia: boolean;
+  temperature: number;
+  sharpen: number;
+  overlayColor: string;
+  overlayStrength: number;
+  filter: ImageFilter;
+  filterStrength: number;
 };
 
 export const DEFAULT_ADJUSTMENTS: ImageAdjustments = {
   brightness: 0,
   contrast: 0,
   saturation: 0,
-  blur: 0,
-  grayscale: false,
-  sepia: false,
+  temperature: 0,
+  sharpen: 0,
+  overlayColor: "#ffffff",
+  overlayStrength: 0,
+  filter: "none",
+  filterStrength: 100,
 };
 
 export type ShapeLineStyle = "solid" | "dashed" | "dense-dashed" | "dotted" | "dash-dot";

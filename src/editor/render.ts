@@ -1,4 +1,5 @@
 import "./ContentTextbox";
+import "./Sharpen";
 import { StaticCanvas } from "fabric";
 import type { DocumentSnapshot, ObjectData } from "../types";
 import type { Assets } from "./assets";

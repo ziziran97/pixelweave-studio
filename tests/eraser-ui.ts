@@ -28,6 +28,10 @@ try {
   check(host.textContent!.includes("松手前按住空格可移动选框"), "框选提示直接说明空格移动选框");
   check(button("按住隐藏选区").disabled && host.textContent!.includes("先选择需要消除的区域"), "无选区时查看按钮禁用，并说明如何启用消除");
   check(!host.querySelector(".erase-base-hint"), "没有新增内容时不显示底图隔离提示");
+  editorTest.editor.setTool("select"); await panel();
+  check(host.textContent!.includes("正在选择对象") && host.textContent!.includes("暂无选区") && !host.querySelector(".erase-submit") && !host.querySelector(".erase-mode-grid"), "无选区切到选择展示模式、返回入口和设置摘要，不堆放禁用操作");
+  button("返回消除笔").click(); await panel();
+  check(editorTest.state().tool === "erase" && editorTest.state().eraseMode === "rect" && !editorTest.state().hasMask && !editorTest.state().task, "无选区返回恢复原方式，不新增选区或自动消除");
   editorTest.drag(20, 20, 100, 100); await panel();
   check(!button("按住隐藏选区").disabled, "完成选区后可按住隐藏选区");
   const peek = button("按住隐藏选区");
@@ -40,6 +44,15 @@ try {
   check(!editorTest.state().maskHidden && editorTest.state().hasMask, "查看时窗口失焦恢复遮罩");
   editorTest.editor.setMaskOperation("subtract"); await panel();
   check(!!host.querySelector(".erase-subtract-hint"), "减去模式按需解释操作对象");
+  editorTest.editor.setEraseMode("brush"); editorTest.editor.setBrushSize(87);
+  const savedMasks = JSON.stringify(editorTest.state().masks), savedViewport = JSON.stringify(editorTest.editor.canvas.viewportTransform);
+  for (const mode of ["select", "pan"] as const) {
+    editorTest.editor.setTool(mode); await panel();
+    check(host.textContent!.includes(mode === "pan" ? "正在平移画布" : "正在选择对象") && host.textContent!.includes("87 px") && host.textContent!.includes("减去") && host.textContent!.includes("已保留") && !host.querySelector(".erase-mode-hint"), `${mode} 模式摘要保留笔刷、选区操作和选区状态，不显示过时绘制提示`);
+    button("返回消除笔").click(); await panel();
+    check(editorTest.state().tool === "erase" && editorTest.state().eraseMode === "brush" && editorTest.state().brushSize === 87 && editorTest.state().maskOperation === "subtract" && JSON.stringify(editorTest.state().masks) === savedMasks && JSON.stringify(editorTest.editor.canvas.viewportTransform) === savedViewport && !editorTest.state().task, `${mode} 返回完整保留消除设置、选区和视野，不自动发起消除`);
+  }
+  editorTest.editor.setEraseMode("rect");
   editorTest.editor.setMaskOperation("add"); await panel();
   check(!host.querySelector(".erase-subtract-hint"), "返回添加模式收起减去说明");
   editorTest.editor.setTool("rect"); editorTest.drag(120, 80, 180, 130);

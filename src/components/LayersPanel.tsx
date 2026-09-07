@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, Eye, EyeOff, Image, Layers3, Lock, Unlock, Trash2, Type, RectangleHorizontal, Circle, Brush, Copy } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Image, Layers3, Lock, Unlock, Trash2, Type, RectangleHorizontal, Circle, Brush, Copy } from "lucide-react";
 import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { ActionButton } from "./ActionButton";
@@ -31,7 +31,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
 
   const content = view.layers.filter(layer => layer.purpose !== "base");
   const index = content.findIndex(layer => layer.id === view.selectedId);
-  const movable = index >= 0 && content[index].visible && !content[index].locked;
+  const movable = view.selectionCount === 1 && index >= 0 && content[index].visible && !content[index].locked;
   const canUp = movable && index > 0, canDown = movable && index < content.length - 1;
   const deleteLabel = view.selectionCount > 1 ? `删除所选 ${view.selectionCount} 个图层` : "删除图层";
   const baseOnly = view.tool === "erase" && !view.compareOriginal && content.length > 0;
@@ -62,9 +62,11 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
     <div className="layer-footer">
       {view.selectionCount > 1 && <span className="layer-selection-count" role="status">已选 {view.selectionCount} 个图层</span>}
       <div className="layer-order" role="group" aria-label="图层操作">
+        <ActionButton floating hint={movable && !canUp ? "已在最上层" : "置顶"} aria-label="置顶" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "top")}><ArrowUpToLine /></ActionButton>
         <ActionButton floating hint={movable && !canUp ? "已在最上层" : "上移一层"} aria-label="上移一层" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "up")}><ArrowUp /></ActionButton>
         <ActionButton floating hint={movable && !canDown ? "已在最下层" : "下移一层"} aria-label="下移一层" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "down")}><ArrowDown /></ActionButton>
-        <ActionButton floating hint="复制图层 Ctrl+D" aria-label="复制图层" disabled={disabled || view.selectionCount !== 1} onClick={() => void engine?.duplicateSelected()}><Copy /></ActionButton>
+        <ActionButton floating hint={movable && !canDown ? "已在最下层" : "置底，仍在底图上方"} aria-label="置底" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "bottom")}><ArrowDownToLine /></ActionButton>
+        <ActionButton floating className="layer-copy" hint="复制图层 Ctrl+D" aria-label="复制图层" disabled={disabled || view.selectionCount !== 1} onClick={() => void engine?.duplicateSelected()}><Copy /></ActionButton>
         <ActionButton floating hint={`${deleteLabel}，可撤销`} aria-label={deleteLabel} disabled={disabled || !view.selectionCount} onClick={() => engine?.deleteSelected()}><Trash2 /></ActionButton>
       </div>
     </div>

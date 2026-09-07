@@ -1,8 +1,9 @@
-import { ActiveSelection, Canvas, Ellipse, FabricImage, Path, Point, Rect, Textbox, filters } from "fabric";
+import { ActiveSelection, Canvas, Ellipse, FabricImage, Path, Point, Rect, Textbox } from "fabric";
 import type { FabricObject, TPointerEventInfo } from "fabric";
 import { editorConfig } from "../config";
 import { callEraseApi } from "../lib/eraseApi";
 import { DEFAULT_ADJUSTMENTS } from "../types";
+import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
 import type { DocumentSnapshot, EditorView, EraseMode, ImageAdjustments, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
 import { Assets, defaultImage, validateJpeg } from "./assets";
 import type { ImageAsset } from "./assets";
@@ -25,7 +26,7 @@ function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
   ctx.strokeStyle = "#fff"; ctx.lineWidth = width + halo * 2; ctx.stroke();
   ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
 }
-export type ColorChannel = "drawing" | "shape" | "fill" | "backgroundColor" | "stroke" | "shadowColor";
+export type ColorChannel = "drawing" | "shape" | "fill" | "backgroundColor" | "stroke" | "shadowColor" | "overlay";
 export interface ColorEdit { preview(color: string): void; finish(apply: boolean): void }
 
 export class EditorController {
@@ -401,6 +402,11 @@ export class EditorController {
     this.configure();
     this.notice = tool === "text" ? "点击「添加文字」开始输入，也可选中已有文字继续编辑" : tool === "pan" ? "拖动画布平移；滚轮缩放" : tool === "erase" ? "选择需要消除的区域，选区不会自动提交" : "可选择、移动或编辑对象";
     if (cancelled) this.notice = "未完成选区已取消；已完成的选区保留";
+    else if ((tool === "erase" || tool === "adjust") && this.canvas.getObjects().some(object => object.editorPurpose === "content")) {
+      this.notice = tool === "erase"
+        ? "仅消除底图内容；新增文字和绘制内容暂时隐藏，退出后恢复原有显示。"
+        : "仅调整底图；新增文字和绘制内容保持不变。";
+    }
     else this.noticePresentation = "quiet";
     this.emit();
   }
@@ -461,6 +467,24 @@ export class EditorController {
   beginColorEdit(channel: ColorChannel): ColorEdit | undefined {
     if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.canvas.getActiveObjects().length > 1) return;
     this.finishText(); this.finishPropertyEdit();
+    if (channel === "overlay") {
+      const before = { ...this.adjustments }, generation = this.generation;
+      const valid = () => !this.disposed && generation === this.generation && this.colorEdit === edit;
+      const edit: ColorEdit = {
+        preview: color => {
+          if (valid() && /^#[\da-f]{6}$/i.test(color)) {
+            this.applyAdjustments({ ...before, overlayColor: color }); this.emit();
+          }
+        },
+        finish: apply => {
+          if (!valid()) return;
+          this.colorEdit = undefined;
+          if (!apply) this.applyAdjustments(before);
+          this.configure(); if (apply) this.commit(); else this.emit();
+        },
+      };
+      this.colorEdit = edit; this.configure(); this.emit(); return edit;
+    }
     const object = this.canvas.getActiveObject(), generation = this.generation;
     const defaults = { color: this.color, shape: { ...this.shapeDefaults }, text: { ...this.textDefaults } };
     const shape = object instanceof Rect || object instanceof Ellipse ? shapeProperties(object) : undefined;
@@ -691,8 +715,9 @@ export class EditorController {
 
   private configure() {
     const editable = !this.locked && !this.space;
-    this.canvas.getActiveObjects().forEach(object => {
-      if (object instanceof Rect || object instanceof Ellipse) object.set({ borderColor: "#287dcc", borderOpacityWhenMoving: 1,
+    const selected = new Set([...this.canvas.getActiveObjects(), this.canvas.getActiveObject()]);
+    selected.forEach(object => {
+      if (object && (object.editorPurpose === "content" || object instanceof ActiveSelection)) object.set({ borderColor: "#287dcc", borderOpacityWhenMoving: 1,
         cornerColor: "#ffffff", cornerStrokeColor: "#287dcc", transparentCorners: false });
     });
     const selection = editable && (this.tool === "select" || this.tool === "text");
@@ -877,8 +902,8 @@ export class EditorController {
       if (selected.length === 1) {
         if (this.tool !== "pan") this.tool = selected[0] instanceof Textbox ? "text" : "select";
         this.syncSelectionWorkspace();
-        this.configure();
       }
+      this.configure();
     }
     this.emit();
   }
@@ -910,14 +935,18 @@ export class EditorController {
     this.changingSelection = false;
     this.canvas.requestRenderAll(); this.commit();
   }
-  moveLayer(id: string, direction: "up" | "down") {
+  moveLayer(id: string, direction: "up" | "down" | "top" | "bottom") {
     if (this.locked) return;
     const object = this.canvas.getObjects().find(item => item.editorId === id); if (!object || object.editorPurpose === "base" || object.editorLocked) return;
     const content = this.canvas.getObjects().filter(item => item.editorPurpose !== "base" && item.editorId);
     const index = content.indexOf(object);
-    if (index < 0 || (direction === "up" ? index === content.length - 1 : index === 0)) return;
+    const towardsTop = direction === "up" || direction === "top";
+    if (index < 0 || (towardsTop ? index === content.length - 1 : index === 0)) return;
     this.finishText();
-    direction === "up" ? this.canvas.bringObjectForward(object) : this.canvas.sendObjectBackwards(object);
+    if (direction === "top") this.canvas.bringObjectToFront(object);
+    else if (direction === "bottom") this.canvas.sendObjectToBack(object);
+    else if (direction === "up") this.canvas.bringObjectForward(object);
+    else this.canvas.sendObjectBackwards(object);
     const base = this.canvas.getObjects().find(item => item.editorPurpose === "base"); if (base) this.canvas.sendObjectToBack(base);
     this.commit();
   }
@@ -964,18 +993,21 @@ export class EditorController {
   }
   setAdjustments(values: ImageAdjustments, commit = false) {
     if (this.locked) return;
-    const image = this.canvas.getObjects().find(object => object.editorPurpose === "base"); if (!(image instanceof FabricImage)) return;
+    if (commit) this.finishPropertyEdit();
     if (!commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
-    this.adjustments = { ...values };
-    const items = [];
-    if (values.brightness) items.push(new filters.Brightness({ brightness: values.brightness / 100 }));
-    if (values.contrast) items.push(new filters.Contrast({ contrast: values.contrast / 100 }));
-    if (values.saturation) items.push(new filters.Saturation({ saturation: values.saturation / 100 }));
-    if (values.blur) items.push(new filters.Blur({ blur: values.blur / 100 }));
-    if (values.grayscale) items.push(new filters.Grayscale());
-    if (values.sepia) items.push(new filters.Sepia());
-    image.filters = items; image.applyFilters(); this.canvas.requestRenderAll();
+    this.applyAdjustments(values);
     if (commit) this.commit(); else this.emit();
+  }
+  private applyAdjustments(values: ImageAdjustments) {
+    const image = this.canvas.getObjects().find(object => object.editorPurpose === "base"); if (!(image instanceof FabricImage)) return;
+    const previous = image.filters;
+    try {
+      const normalized = normalizeAdjustments(values);
+      image.filters = adjustmentFilters(normalized); image.applyFilters();
+      this.adjustments = normalized; this.canvas.requestRenderAll();
+    } catch (error) {
+      image.filters = previous; image.applyFilters(); this.canvas.requestRenderAll(); this.report(error);
+    }
   }
 
   async executeErase() {

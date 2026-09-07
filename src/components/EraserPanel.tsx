@@ -26,6 +26,20 @@ const MODE_HELP: Record<EraseMode, string> = {
 export function EraserPanel({ view, engine, locked, execute }: {
   view: EditorView; engine: EditorController | null; locked: boolean; execute: () => void;
 }) {
+  if (view.tool === "select" || view.tool === "pan") return <fieldset disabled={locked} className="erase-paused">
+    <p className="text-style-scope">{view.tool === "pan" ? "正在平移画布" : "正在选择对象"}</p>
+    <p className="field-help">{view.tool === "pan" ? "拖动画布查看图片。" : "点击或框选新增文字、图形和笔画。"}</p>
+    <button type="button" className="secondary-button full" aria-label="返回消除笔" onClick={() => engine?.setTool("erase")}><Eraser size={16} />返回消除笔</button>
+    <div className="erase-saved-settings">
+      <p className="text-style-scope">已保留的消除设置</p>
+      <dl>
+        <div><dt>消除方式</dt><dd>{MODES.find(mode => mode.id === view.eraseMode)!.label}</dd></div>
+        <div><dt>选区操作</dt><dd>{view.maskOperation === "subtract" ? "减去" : "添加"}</dd></div>
+        {view.eraseMode === "brush" && <div><dt>笔刷大小</dt><dd>{view.brushSize} px</dd></div>}
+        <div><dt>消除选区</dt><dd>{view.hasMask ? "已保留" : "暂无选区"}</dd></div>
+      </dl>
+    </div>
+  </fieldset>;
   const hint = view.eraseMode === "lasso" && view.lassoPoints
     ? view.lassoPoints < 3 ? "继续点击，至少添加三个点" : "点击起点或按 Enter 闭合"
     : MODE_HELP[view.eraseMode];

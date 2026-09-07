@@ -20,6 +20,17 @@ try {
   const initialWidth = viewport().clientWidth;
   check(!settingsHidden() && !host.querySelector(".tip-card") && button("消除笔").getAttribute("aria-pressed") === "true", "初始选中消除笔并展开属性，不显示常驻说明卡片");
   check([...host.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === "开始消除")!.disabled && host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.disabled && button("撤销").disabled, "默认消除模式无选区、不处理图片、不产生草稿修改");
+  const eraseZoom = zoom();
+  for (const mode of ["选择", "平移"]) {
+    button(mode).click(); await paint();
+    check(!!button("返回消除笔") && !settings().querySelector(".canvas-mode-hint") && !settings().querySelector(".erase-mode-grid") && settings().textContent!.includes("已保留的消除设置"), `消除切${mode}显示单一模式说明、返回入口和设置摘要`);
+    button("返回消除笔").click(); await paint();
+    check(!!settings().querySelector(".erase-mode-grid") && !settings().querySelector(".erase-paused") && viewport().clientWidth === initialWidth && zoom() === eraseZoom && button("撤销").disabled, `从${mode}返回消除保持面板尺寸、缩放及历史`);
+  }
+  const eraseCanvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!;
+  eraseCanvas.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })); await paint();
+  check(!!settings().querySelector(".erase-mode-grid") && !settings().querySelector(".erase-paused"), "按住空格临时平移不切换消除面板");
+  window.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space", bubbles: true }));
   const help = button("操作帮助");
   const helpTip = () => document.getElementById(help.getAttribute("aria-describedby") ?? "");
   const delay = () => new Promise(resolve => setTimeout(resolve, 360));

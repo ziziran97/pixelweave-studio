@@ -8,6 +8,14 @@ import { ActiveSelection, Ellipse, Path, Rect, Textbox } from "fabric";
 
 export async function checkWorkspacePersistence(check: (condition: boolean, message: string) => void) {
   const { editor, state, click, drag, dispose } = createEditor();
+  const clearSelectionFrame = () => {
+    const object = editor.canvas.getActiveObject()!;
+    editor.canvas.renderAll();
+    const point = object.oCoords.mtr;
+    const pixel = editor.canvas.lowerCanvasEl.getContext("2d")!.getImageData(Math.round(point.x), Math.round(point.y), 1, 1).data;
+    return pixel[0] === 255 && pixel[1] === 255 && pixel[2] === 255 && object.borderColor === "#287dcc" &&
+      object.cornerStrokeColor === "#287dcc" && !object.transparentCorners && object.borderOpacityWhenMoving === 1;
+  };
   try {
     await editor.initialize();
     editor.setTool("rect"); drag(80, 80, 180, 140);
@@ -47,11 +55,14 @@ export async function checkWorkspacePersistence(check: (condition: boolean, mess
     editor.setTool("draw"); editor.setDrawSize(8); drag(80, 200, 180, 200);
     const brushId = state().layers.find(layer => layer.kind === "brush")!.id;
     editor.selectLayer(brushId);
+    check(clearSelectionFrame(), "画笔旋转点实际渲染白色实心，选中边框及拖动状态保持清晰");
+    check(Object.keys(editor.canvas.getActiveObject()!.controls).length === 9, "画笔保留八个缩放控制点及旋转控制点");
     for (const width of [15, 40, 70, 90]) editor.updateDrawing({ width }, false);
     editor.finishPropertyEdit();
     check(state().drawing?.width === 90, "连续粗细调整实时显示最终值");
     await editor.undo();
     check(state().selectedId === brushId && state().drawing?.width === 8, "连续粗细调整一次撤销回到拖动前，保留笔画选择");
+    check(clearSelectionFrame(), "撤销恢复画笔后选中框仍保持统一样式");
     await editor.undo(true);
     check(state().selectedId === brushId && state().drawing?.width === 90, "一次重做恢复完整粗细调整");
     editor.updateDrawing({ width: 30 }, false); window.dispatchEvent(new Event("blur"));
@@ -65,8 +76,11 @@ export async function checkWorkspacePersistence(check: (condition: boolean, mess
     check(state().workspace === "text" && !!state().text && !state().selectedId, "文字经过选择和平移后，取消选择仍保留新文字样式");
     editor.selectLayer(textId); await editor.updateText({ ...state().text!, fontSize: 60 }); await editor.undo();
     check(state().selectedId === textId && state().workspace === "text", "撤销文字属性保留文字选择及工作区");
+    check(clearSelectionFrame() && Object.keys(editor.canvas.getActiveObject()!.controls).sort().join() === "ml,mr,mtr", "文字撤销后旋转点仍为白底蓝边，保持左右调宽及旋转方式");
     const mixed = [textId, brushId].map(id => editor.canvas.getObjects().find(object => object.editorId === id)!);
-    editor.canvas.setActiveObject(new ActiveSelection(mixed, { canvas: editor.canvas })); editor.setTool("pan");
+    editor.canvas.setActiveObject(new ActiveSelection(mixed, { canvas: editor.canvas }));
+    check(clearSelectionFrame(), "混合多选创建时立即使用统一外框和白色控制点");
+    editor.setTool("pan");
     const mixedRequest = state().propertiesRequest;
     editor.updateLayer(textId, { visible: false });
     check(state().selectedId === brushId && state().workspace === "draw" && state().tool === "pan" && state().propertiesRequest === mixedRequest, "平移时混合多选减少到单选，属性跟随剩余对象但不改变模式或展开面板");

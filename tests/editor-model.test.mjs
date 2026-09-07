@@ -6,10 +6,16 @@ import ts from "typescript";
 // Pure business modules only; transpile types with the existing dependency, no test framework or browser mocks.
 async function load(path) {
   const code = await readFile(new URL(path, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+  let compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+  if (compiled.includes('from "../types"')) {
+    const types = await readFile(new URL("../src/types.ts", import.meta.url), "utf8");
+    const runtime = ts.transpileModule(types, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+    compiled = compiled.replace('"../types"', `"data:text/javascript;base64,${Buffer.from(runtime).toString("base64")}"`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
 const { applyResult, History, sameDocumentContent } = await load("../src/editor/model.ts");
+const { DEFAULT_ADJUSTMENTS } = await load("../src/types.ts");
 const { binaryPixels } = await load("../src/editor/geometry.ts");
 const { textPlacement } = await load("../src/editor/textPlacement.ts");
 
@@ -42,7 +48,7 @@ const snapshot = () => ({
     { type: "Rect", editorId: "hidden", editorPurpose: "content", visible: false },
     { type: "Path", editorId: "drawing", editorPurpose: "content", visible: true },
   ], masks: [{ kind: "rect", operation: "add", points: [{ x: 1, y: 1 }, { x: 10, y: 10 }], width: 0 }],
-  adjustments: { brightness: 30, contrast: 0, saturation: 0, blur: 0, grayscale: false, sepia: false },
+  adjustments: { ...DEFAULT_ADJUSTMENTS, brightness: 30, temperature: 25, sharpen: 30, overlayColor: "#aa7744", overlayStrength: 20, filter: "warm", filterStrength: 60 },
 });
 
 test("base result retains editable text and original snapshot", () => {
@@ -50,7 +56,7 @@ test("base result retains editable text and original snapshot", () => {
   const next = applyResult(before, { type: "Image", editorId: "new-base", editorPurpose: "base", editorAssetId: "new" });
   assert.deepEqual(next.objects.map(x => x.editorId), ["new-base", "title", "hidden", "drawing"]);
   assert.equal(next.objects[1].text, "准确文案");
-  assert.equal(next.masks.length, 0); assert.equal(next.adjustments.brightness, 0);
+  assert.equal(next.masks.length, 0); assert.deepEqual(next.adjustments, DEFAULT_ADJUSTMENTS);
   next.objects[1].text = "继续编辑";
   assert.deepEqual(before, saved);
 });

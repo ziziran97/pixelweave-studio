@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, EditorMetadata, ObjectData } from "../types";
+import { DEFAULT_ADJUSTMENTS } from "../types";
 
 export const SERIALIZED_PROPS: Array<keyof EditorMetadata> = ["editorId", "editorName", "editorRole", "editorPurpose", "editorLocked", "editorAssetId", "editorFilled", "editorColor", "editorLineWidth", "editorLineStyle", "editorRadius", "editorTextBackground", "editorTextBackgroundColor", "editorTextPadding", "editorTextRadius", "editorTextShadowColor"];
 export const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
@@ -11,7 +12,7 @@ export function applyResult(snapshot: DocumentSnapshot, image: ObjectData): Docu
     ...deepCopy(snapshot),
     objects: [image, ...deepCopy(snapshot.objects.filter(object => object.editorPurpose !== "base"))],
     masks: [],
-    adjustments: { brightness: 0, contrast: 0, saturation: 0, blur: 0, grayscale: false, sepia: false },
+    adjustments: { ...DEFAULT_ADJUSTMENTS },
   };
 }
 // Exclude only the selection field, so future document properties automatically

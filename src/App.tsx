@@ -3,7 +3,7 @@ import type { ComponentType, SVGProps } from "react";
 import { Brush, CircleHelp, Eraser, PanelLeftClose, RotateCcwSquare, Hand, ImagePlus, Layers3, Minus, MousePointer2, Plus, Redo2, Save, ScanSquare, SlidersHorizontal, Type, X, Undo2 } from "lucide-react";
 import { EditorController } from "./editor/EditorController";
 import { DEFAULT_ADJUSTMENTS } from "./types";
-import type { EditorView, ImageAdjustments, ToolId } from "./types";
+import type { EditorView, ToolId } from "./types";
 import { DEFAULT_SHAPE } from "./editor/shape";
 import type { EditorIntegration } from "./integration";
 import { DrawingToolsPanel } from "./components/DrawingToolsPanel";
@@ -17,7 +17,7 @@ import { ActionButton } from "./components/ActionButton";
 import { OriginalPreviewButton } from "./components/OriginalPreviewButton";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { ShortcutHelp } from "./components/ShortcutHelp";
-import { PropertySlider } from "./components/PropertySlider";
+import { AdjustmentsPanel } from "./components/AdjustmentsPanel";
 
 type EditorIconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 type EditorIcon = ComponentType<EditorIconProps>;
@@ -39,12 +39,6 @@ const EMPTY: EditorView = {
   adjustments: DEFAULT_ADJUSTMENTS, compareOriginal: false, shape: DEFAULT_SHAPE,
   picking: false, colorEditing: false, submitting: false, submissionStage: "", needsConfirmation: false, saved: false, closed: false, canSubmit: false, canUpload: false,
 };
-
-function Range({ label, value, min, max, change, commit }: { label: string; value: number; min: number; max: number; change: (value: number) => void; commit: () => void }) {
-  return <label className="slider-row"><span className="slider-title"><span>{label}</span><strong>{value}</strong></span>
-    <PropertySlider label={label} min={min} max={max} value={value} change={change} commit={commit} />
-  </label>;
-}
 
 export default function App({ integration }: { integration?: EditorIntegration }) {
   const canvasRef = useRef<HTMLCanvasElement>(null), overlayRef = useRef<HTMLCanvasElement>(null), viewportRef = useRef<HTMLDivElement>(null), fileRef = useRef<HTMLInputElement>(null);
@@ -72,7 +66,6 @@ export default function App({ integration }: { integration?: EditorIntegration }
   const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
   const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking;
   const execute = () => { void engine?.executeErase(); };
-  const adjust = (key: keyof ImageAdjustments, value: number | boolean, commit = false) => engine?.setAdjustments({ ...view.adjustments, [key]: value }, commit);
   const panelKind = view.workspace;
   const changeSettings = (open: boolean) => {
     if (settingsOpen === open) return;
@@ -104,7 +97,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
       setSettingsOpen(true);
     }
   }, [view.propertiesRequest, view.selectionCount, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
-  const settingsTitle = panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
+  const settingsTitle = view.selectionCount > 1 ? `已选 ${view.selectionCount} 个图层` : panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
   const locateProblem = view.problemObjectId && view.layers.some(layer => layer.id === view.problemObjectId) ? () => {
     engine?.zoomTo(view.zoom);
     setLayersOpen(true);
@@ -136,16 +129,14 @@ export default function App({ integration }: { integration?: EditorIntegration }
       <aside id="tool-settings" className="settings-panel" hidden={!settingsOpen} aria-label="工具属性">
         <div className="panel-heading"><span>{settingsTitle}</span><ActionButton floating className="icon-button" aria-label="收起工具属性" hint="收起工具属性，再次点击工具可展开" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => { changeSettings(false); viewportRef.current?.focus({ preventScroll: true }); }}><PanelLeftClose /></ActionButton></div>
         <div className={`panel-content${panelKind === "draw" && view.selectionCount <= 1 ? " drawing-properties" : ""}`}>
-          {view.tool === "pan" && <p className="field-help canvas-mode-hint">拖动画布平移；点击底部选择可继续编辑对象。</p>}
-          {view.selectionCount > 1 ? <div className="multi-selection-properties"><p className="text-style-scope">已选 {view.selectionCount} 个图层</p><p className="field-help">可一起移动、调整尺寸或删除。选中单个图层可调整属性。</p></div>
+          {view.tool === "pan" && view.selectionCount <= 1 && panelKind !== "erase" && <p className="field-help canvas-mode-hint">拖动画布平移；点击底部选择可继续编辑对象。</p>}
+          {view.selectionCount > 1 ? <div className="multi-selection-properties">
+            <p className="multi-selection-guide">{view.tool === "pan" ? "当前为平移模式。点击底部「选择」可继续编辑所选图层。" : "拖动选中内容可一起移动，拖动控制点可缩放或旋转。"}</p>
+            <p className="field-help">选择单个图层可编辑其属性。</p>
+          </div>
             : panelKind === "erase" ? <>
-              {view.tool !== "erase" && <p className="field-help">点击左侧消除笔，继续选择消除区域。</p>}
-              <EraserPanel view={view} engine={engine} locked={locked || view.tool !== "erase"} execute={execute} />
-            </> : panelKind === "adjust" ? <fieldset disabled={locked}>
-            {([{ key: "brightness", label: "亮度", min: -100, max: 100 }, { key: "contrast", label: "对比度", min: -100, max: 100 }, { key: "saturation", label: "饱和度", min: -100, max: 100 }, { key: "blur", label: "模糊", min: 0, max: 30 }] as const).map(item => <Range key={item.key} label={item.label} value={view.adjustments[item.key]} min={item.min} max={item.max} change={value => adjust(item.key, value)} commit={() => engine?.finishPropertyEdit()} />)}
-            <div className="toggle-grid"><button className={view.adjustments.grayscale ? "selected" : ""} onClick={() => adjust("grayscale", !view.adjustments.grayscale, true)}>黑白</button><button className={view.adjustments.sepia ? "selected" : ""} onClick={() => adjust("sepia", !view.adjustments.sepia, true)}>复古</button></div>
-            <button className="secondary-button full" onClick={() => engine?.setAdjustments(DEFAULT_ADJUSTMENTS, true)}>重置调色</button>
-          </fieldset> : <>
+              <EraserPanel view={view} engine={engine} locked={locked} execute={execute} />
+            </> : panelKind === "adjust" ? engine && <AdjustmentsPanel view={view} engine={engine} disabled={locked} /> : <>
             {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} />
               : panelKind === "draw" && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} /> : null}
           </>}

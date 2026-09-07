@@ -1,4 +1,5 @@
 import { checkColorEditing } from "./color-editing";
+import { checkAdjustments } from "./adjustments";
 import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
 import { checkSelectionInteractions } from "./selection-interactions";
@@ -10,6 +11,7 @@ import { checkDrawingTransforms } from "./drawing-transforms";
 import { checkShapeStyles } from "./shape-styles";
 import { checkDrawingTargeting } from "./drawing-targeting";
 import { renderDocument } from "../src/editor/render";
+import { DEFAULT_ADJUSTMENTS } from "../src/types";
 import type { DocumentSnapshot, MaskStroke } from "../src/types";
 
 const reports: string[] = [];
@@ -27,7 +29,7 @@ try {
   const ctx = source.getContext("2d")!; ctx.fillStyle = "#123456"; ctx.fillRect(0, 0, 512, 256);
   const asset = await assets.add(await toBlob(source));
   const scene: DocumentSnapshot = { size: { width: 512, height: 256 }, masks: [],
-    adjustments: { brightness: 0, contrast: 0, saturation: 0, blur: 0, grayscale: false, sepia: false },
+    adjustments: { ...DEFAULT_ADJUSTMENTS },
     objects: [
       { type: "Image", editorId: "base", editorAssetId: asset.id, editorPurpose: "base", left: 0, top: 0, width: 512, height: 256, originX: "left", originY: "top" },
       { type: "Rect", editorId: "content", editorPurpose: "content", left: 30, top: 30, width: 60, height: 60, fill: "#00ff00", strokeWidth: 0, originX: "left", originY: "top" },
@@ -95,6 +97,7 @@ try {
   await checkShapeStyles(check);
   await checkDrawingTargeting(check);
   await checkColorEditing(check);
+  await checkAdjustments(check);
   await checkTextWorkspace(check);
   await checkWorkspacePersistence(check);
   await checkReplacementFlow(check);
