@@ -1,0 +1,105 @@
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { ActiveSelection } from "fabric";
+import App from "../src/App";
+import { LayersPanel } from "../src/components/LayersPanel";
+import { createEditor, frame, picture, settle } from "./editing-tools";
+import type { EditorIntegration } from "../src/integration";
+import "../src/styles.css";
+
+const reports: string[] = [];
+const check = (value: boolean, message: string) => { if (!value) throw new Error(message); reports.push(`PASS ${message}`); };
+const host = document.getElementById("test-root")!, root = createRoot(host);
+const paint = async () => { await frame(); await frame(); };
+const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const test = createEditor();
+let disposed = false;
+try {
+  await test.editor.initialize();
+  const { editor, state } = test;
+  const render = async (hidden = false, locate?: { id: string; request: number }) => {
+    root.render(createElement("div", { style: { height: 320, width: 222, display: "flex" } }, createElement(LayersPanel, { view: state(), engine: editor, disabled: false, hidden, locate })));
+    await paint();
+  };
+  editor.setTool("rect"); test.drag(20, 20, 90, 90);
+  const a = editor.canvas.getObjects().at(-1)!;
+  editor.selectLayer(a.editorId!); await render();
+  check(button("上移一层").disabled && button("下移一层").disabled, "单一内容图层不能上下移动");
+  const before = JSON.stringify(editor.canvas.toJSON());
+  editor.moveLayer(a.editorId!, "up"); editor.moveLayer(a.editorId!, "down");
+  check(JSON.stringify(editor.canvas.toJSON()) === before, "排序边界操作不改变文档");
+  check(!!host.querySelector(".layer-thumb img") && !!host.querySelector(".layer-color"), "底图使用实际图片，形状带颜色标记");
+  editor.setTool("circle"); test.drag(120, 40, 180, 90);
+  const b = editor.canvas.getObjects().at(-1)!;
+  editor.selectLayer(b.editorId!); await render();
+  check(button("上移一层").disabled && !button("下移一层").disabled, "最上层只能下移");
+  const viewport = JSON.stringify(editor.canvas.viewportTransform);
+  editor.updateLayer(a.editorId!, { visible: false });
+  check(state().selectedId === b.editorId, "隐藏其他图层保留当前选中对象");
+  editor.updateLayer(a.editorId!, { locked: true }); await render();
+  check(state().selectedId === b.editorId && JSON.stringify(editor.canvas.viewportTransform) === viewport, "锁定其他图层保留选择与画布视野");
+  const rowA = host.querySelector<HTMLElement>(`[data-layer-id='${a.editorId}']`)!;
+  check(rowA.textContent!.includes("已隐藏 · 已锁定") && button(`选择图层 ${a.editorName}`).disabled, "隐藏和锁定同时展示，名称不自动解锁或显示");
+  editor.updateLayer(a.editorId!, { visible: true, locked: false });
+  editor.moveLayer(b.editorId!, "down"); await render();
+  check(!button("上移一层").disabled && button("下移一层").disabled && editor.canvas.getObjects()[0].editorPurpose === "base", "移动后按钮边界更新，底图保持最下层");
+  editor.setTool("rect"); test.drag(200, 100, 270, 150);
+  const c = editor.canvas.getObjects().at(-1)!;
+  editor.setTool("select"); editor.canvas.setActiveObject(new ActiveSelection([a, b, c], { canvas: editor.canvas })); await render();
+  check(!!button("删除所选 3 个图层") && host.textContent!.includes("已选 3 个图层") && button("复制图层").disabled, "多选显示数量，删除明确作用范围");
+  const positions = [a, b, c].map(item => item.getCenterPoint());
+  editor.updateLayer(b.editorId!, { locked: true });
+  check(state().selectionCount === 2 && editor.canvas.getActiveObjects().includes(a) && editor.canvas.getActiveObjects().includes(c), "锁定多选中的一个图层后保留其余两个");
+  editor.updateLayer(a.editorId!, { visible: false });
+  check(state().selectedId === c.editorId && [a, b, c].every((item, i) => item.getCenterPoint().distanceFrom(positions[i]) < .01), "多选减少到单选时对象位置不跳动");
+  editor.deleteSelected();
+  check(!state().layers.some(layer => layer.id === c.editorId) && state().notice.includes("可撤销"), "删除提供可撤销反馈");
+  await editor.undo();
+  check(state().layers.some(layer => layer.id === c.editorId), "撤销可恢复删除图层");
+  editor.selectLayer(c.editorId!);
+  for (let i = 0; i < 12; i++) await editor.duplicateSelected();
+  await render();
+  const list = host.querySelector<HTMLElement>(".layer-list")!;
+  check(list.scrollHeight > list.clientHeight, "较多图层在面板内部滚动");
+  editor.updateLayer(a.editorId!, { visible: true, locked: false }); editor.selectLayer(a.editorId!); await render();
+  check(list.scrollTop > 0 && JSON.stringify(editor.canvas.viewportTransform) === viewport, "选中远处图层只滚动列表，不移动画布");
+  await editor.duplicateSelected(); await render();
+  const copiedBounds = host.querySelector(".layer-card.selected")!.getBoundingClientRect(), listBounds = list.getBoundingClientRect();
+  check(copiedBounds.top >= listBounds.top && copiedBounds.bottom <= listBounds.bottom, "复制后自动定位新增的顶层图层");
+  await render(true); await editor.duplicateSelected(); await render(true);
+  check(getComputedStyle(host.querySelector(".layers-panel")!).display === "none", "收起期间新增图层保持收起");
+  editor.updateLayer(a.editorId!, { visible: false, locked: true });
+  await render(false, { id: a.editorId!, request: 1 });
+  check((document.activeElement as HTMLElement).dataset.layerId === a.editorId && list.scrollTop > 0 && state().layers.find(layer => layer.id === a.editorId)!.locked && !state().layers.find(layer => layer.id === a.editorId)!.visible, "显式定位聚焦列表并保留隐藏和锁定状态");
+  editor.setTool("erase"); await render();
+  check(host.querySelector(".layer-legend")!.textContent === "当前仅预览底图，新增内容已保留。", "消除笔状态明确临时只预览底图");
+  root.render(null); await paint(); test.dispose(); disposed = true;
+
+  // Verify the real App path from a failed validation to a collapsed, hidden layer.
+  let problemId = "", saves = 0;
+  const integration: EditorIntegration = { initialImage: await picture(), context: { taskId: "layers", imageId: "test" },
+    validateTexts: async texts => ({ passed: false, message: "请修改新增文案", objectId: problemId || texts[0]?.id }),
+    replace: async () => { saves++; return { status: "pending" }; }, confirmResult: async () => ({ status: "pending" }), onClose: () => {} };
+  root.render(createElement(App, { integration }));
+  await settle(() => !!button("文字") && !button("文字").disabled);
+  button("文字").click(); await paint();
+  const canvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!, bounds = canvas.getBoundingClientRect();
+  for (const type of ["mousedown", "mouseup"]) (type === "mousedown" ? canvas : document).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: type === "mousedown" ? 1 : 0, clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2 }));
+  await settle(() => !!host.querySelector(".layer-card[data-purpose=content]"));
+  problemId = host.querySelector<HTMLElement>(".layer-card[data-purpose=content]")!.dataset.layerId!;
+  button("复制图层").click(); await settle(() => host.querySelectorAll(".layer-card[data-purpose=content]").length === 2);
+  const problemRow = host.querySelector<HTMLElement>(`[data-layer-id='${problemId}']`)!;
+  problemRow.querySelector<HTMLButtonElement>(".layer-controls button")!.click(); await paint();
+  problemRow.querySelectorAll<HTMLButtonElement>(".layer-controls button")[1].click(); await paint();
+  button("收起图层").click(); await paint();
+  const zoom = host.querySelector("output")!.textContent;
+  host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click();
+  await settle(() => !!host.querySelector<HTMLDialogElement>(".confirmation-dialog")?.open);
+  host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")!.click();
+  await settle(() => !!host.querySelector(".has-problem"));
+  check(!!button("展开图层") && saves === 0, "校验失败不自动展开面板，不调用保存");
+  host.querySelector<HTMLButtonElement>(".notice-bar button")!.click(); await paint();
+  check(!!button("收起图层") && (document.activeElement as HTMLElement).dataset.layerId === problemId && host.querySelector("output")!.textContent === zoom, "查看问题图层展开并聚焦，保留缩放");
+  check(problemRow.textContent!.includes("已隐藏 · 已锁定") && problemRow.classList.contains("has-problem"), "问题定位保留隐藏锁定状态和异常提示");
+} catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
+finally { if (!disposed) test.dispose(); document.getElementById("results")!.textContent = reports.join("\n"); }

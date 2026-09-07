@@ -32,6 +32,11 @@ export function createEditor(integration?: EditorIntegration) {
     }));
   };
   return { editor, state: () => view, overlay, mouse,
+    confirm: (run: () => Promise<void>, accepted = true) => {
+      const done = run();
+      if (view.confirmation) editor.answerConfirmation(view.confirmation.id, accepted);
+      return done;
+    },
     click: (x: number, y: number) => { mouse("mousedown", x, y); mouse("mouseup", x, y); },
     drag: (x: number, y: number, endX: number, endY: number, shiftKey = false) => {
       mouse("mousedown", x, y, { shiftKey }); mouse("mousemove", endX, endY, { shiftKey }); mouse("mouseup", endX, endY, { shiftKey });
@@ -53,12 +58,13 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     replace: async input => { submitted = input; return { status: "failed", message: "测试回执：仅检查成图，不保存" }; },
     confirmResult: async () => ({ status: "pending" }), onClose: () => {},
   };
-  const { editor, state, mouse, click, drag, dispose } = createEditor(integration);
-  const confirm = window.confirm; window.confirm = () => true;
+  const { editor, state, mouse, click, drag, dispose, confirm } = createEditor(integration);
   const snapshot = () => JSON.stringify(editor.canvas.toObject(SERIALIZED_PROPS));
   try {
     await editor.initialize();
     check(!state().canSubmit && state().ready, "初始未修改图片不能提交替换");
+    editor.activateDrawing();
+    check(state().tool === "draw", "首次进入绘制默认使用画笔");
     editor.setEraseMode("brush"); drag(40, 40, 70, 40);
     check(state().hasMask && !state().canSubmit, "只画消除选区不算成图修改");
     editor.resetEraseSelection();
@@ -79,6 +85,16 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     editor.setTool("circle"); drag(200, 20, 245, 80, true);
     const ellipse = editor.canvas.getActiveObject() as Ellipse;
     check(ellipse instanceof Ellipse && ellipse.rx === ellipse.ry && ellipse.editorColor === "#ff0000", "椭圆支持 Shift 正圆并沿用最近形状设置");
+    const beforeSwitch = snapshot();
+    editor.activateDrawing("rect");
+    check(state().tool === "rect" && !state().selectedId && snapshot() === beforeSwitch,
+      "切换绘制类型只取消选中，不转换或修改已有形状");
+    editor.setTool("pan"); editor.activateDrawing();
+    check(state().tool === "rect", "从其他工具返回绘制，记住本次最后使用的类型");
+    editor.activateDrawing("draw");
+    check(state().color === "#ff0000", "画笔沿用最近设置的形状颜色");
+    editor.setColor("#00ff00"); editor.activateDrawing("circle");
+    check(state().shape.color === "#00ff00", "形状沿用最近设置的画笔颜色");
     editor.setTool("draw"); editor.setColor("#00ff00"); editor.setDrawSize(12);
     drag(40, 300, 160, 300);
     const path = editor.canvas.getObjects().find(object => object instanceof Path) as Path;
@@ -111,41 +127,59 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     text = editor.canvas.getActiveObject() as ContentTextbox;
     check(text.editorTextPadding === 14 && text.width === width && text.height === height, "撤销恢复文字背景且保留排版尺寸");
     editor.setTool("select");
-    await editor.submitReplacement();
+    await confirm(() => editor.submitReplacement());
     const background = await pixelAt(submitted.image, 63, 115);
     check(background.slice(0, 3).every(value => value > 245), "文字四周背景留白实际进入最终 JPG，未被缓存裁切");
     check(submitted.texts.some(value => value.id === textId && value.text === "商品文案\n第二行"), "提交包含完整新增文案及稳定对象标识");
-    editor.updateLayer(textId, { visible: false }); await editor.submitReplacement();
+    editor.updateLayer(textId, { visible: false }); await confirm(() => editor.submitReplacement());
     check(submitted.texts.some(value => value.id === textId), "隐藏新增文字仍参与完整文案校验");
     const hiddenPixel = await pixelAt(submitted.image, 63, 115);
     check(hiddenPixel[0] < 30 && hiddenPixel[1] > 40 && hiddenPixel[2] > 70, "隐藏文字及其背景均不进入最终成图");
     editor.setTool("draw"); editor.zoomTo(.8);
     await editor.startColorPick(color => editor.setColor(color)); click(450, 350);
     check(!state().picking && state().tool === "draw" && /^#1[0123456789abcdef]3[0123456789abcdef]5[0123456789abcdef]$/.test(state().color), "缩放后取色使用图片坐标，并返回画笔");
+    const beforeCompare = snapshot(), sameSizeViewport = [...editor.canvas.viewportTransform];
+    editor.setCompare(true);
+    check(state().compareOriginal && editor.canvas.viewportTransform.every((value, i) => value === sameSizeViewport[i]), "同尺寸原图沿用当前缩放和位置，不自动适配");
+    editor.setCompare(true); editor.setCompare(false); editor.setCompare(false);
+    check(!state().compareOriginal && snapshot() === beforeCompare && editor.canvas.viewportTransform.every((value, i) => value === sameSizeViewport[i]), "重复开始或结束对比不覆盖工作视图和编辑内容");
 
     const before = snapshot(), initialLayerCount = state().layers.length;
     const png = await picture("#00ff00", 200, 150, "image/png");
     for (const file of [new File([png], "伪装.jpg"), new File([source], "错误.png"), new File([new Uint8Array([255,216,255,0])], "损坏.jpeg")]) {
-      await editor.uploadReplacement(file);
+      await confirm(() => editor.uploadReplacement(file));
       check(snapshot() === before && state().layers.length === initialLayerCount, `${file.name}被拒绝且完整保留草稿`);
     }
     const changed = await picture("#eeddcc", 220, 160);
-    window.confirm = () => false; await editor.uploadReplacement(new File([changed], "取消.jpg"));
+    const cancelledUpload = editor.uploadReplacement(new File([changed], "取消.jpg"));
+    check(state().confirmation?.kind === "upload", "上传已编辑图片时请求页面内确认");
+    editor.answerConfirmation(state().confirmation!.id, false); await cancelledUpload;
     check(snapshot() === before, "取消放弃草稿后保持当前编辑");
-    window.confirm = () => true; await editor.uploadReplacement(new File([changed], "新图.JPEG", { type: "application/octet-stream" }));
+    await confirm(() => editor.uploadReplacement(new File([changed], "新图.JPEG", { type: "application/octet-stream" })));
     check(state().size.width === 220 && state().size.height === 160 && state().layers.length === 1 && state().canSubmit,
       "合法 JPEG 按实际编码载入，保留自身尺寸且可直接替换");
+    check(state().notice === "图片已载入，可继续编辑；点击「替换图片」后保存到任务。", "上传成功明确提示还需提交到任务");
     const uploadViewport = [...editor.canvas.viewportTransform]; editor.setCompare(true);
     check(state().compareOriginal && state().size.width === 220, "上传后对比初始不改写当前草稿尺寸");
     editor.setCompare(false);
     check(editor.canvas.viewportTransform.every((value, i) => value === uploadViewport[i]), "初始对比结束恢复上传图查看位置");
-    await editor.submitReplacement();
+    editor.zoomTo(.8);
+    const editingViewport = [...editor.canvas.viewportTransform], selected = editor.canvas.getActiveObject();
+    editor.setCompare(true); editor.zoomTo(state().zoom);
+    const compareZoom = state().zoom, viewport = editor.canvas.upperCanvasEl.parentElement!.parentElement!;
+    viewport.style.width = "1000px";
+    await settle(() => editor.canvas.width === 1000);
+    check(state().zoom === compareZoom, "调整面板空间保持对比图片的缩放比例");
+    editor.setCompare(false);
+    check(editor.canvas.viewportTransform.every((value, i) => value === editingViewport[i] + (i === 4 ? 100 : 0)) && editor.canvas.getActiveObject() === selected,
+      "对比期间画布变宽后恢复相同图片中心及选中对象");
+    await confirm(() => editor.submitReplacement());
     check(submitted.source === "upload" && submitted.texts.length === 0 && submitted.width === 220, "上传来源及清空后的文案正确提交，目标图片身份保留");
-    await editor.resetOriginal();
+    await confirm(() => editor.resetOriginal());
     check(state().size.width === 512 && !state().canSubmit, "还原初始回到进入时图片，并清除上传来源");
-    await editor.undo(); await editor.submitReplacement();
+    await editor.undo(); await confirm(() => editor.submitReplacement());
     check(submitted.source === "upload" && submitted.width === 220, "撤销还原恢复上传图和来源");
     const jpeg = await validateJpeg(submitted.image);
     check(jpeg.width === 220 && jpeg.height === 160, "最终输出通过 JPEG 实际编码及解码校验");
-  } finally { window.confirm = confirm; dispose(); }
+  } finally { dispose(); }
 }

@@ -104,6 +104,28 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
       check(!!state().pending && !state().task && content() === unchanged, `${label}后可用原选区成功重试`);
       editor.discardResult();
     }
+    const latePreview = await start();
+    const closing = editor.requestClose(), confirmation = state().confirmation!;
+    check(confirmation.kind === "close" && state().task, "消除等待中关闭先确认，未立即取消请求");
+    latePreview.request.respond(new Response(result)); await latePreview.done;
+    check(!!state().pending && state().confirmation?.id === confirmation.id && content() === unchanged, "确认期间消除结果返回仍保留当前确认和编辑内容");
+    editor.answerConfirmation(confirmation.id, false); await closing;
+    check(!!state().pending && !state().closed && !state().confirmation, "取消关闭保留晚返回的消除结果");
+    editor.discardResult();
+    const adoption = await start(); adoption.request.respond(new Response(result)); await adoption.done;
+    const pending = state().pending!, requestCount = all.length;
+    const loader = editor as unknown as { loadSnapshot: (...args: unknown[]) => Promise<void> };
+    const originalLoad = loader.loadSnapshot;
+    try {
+      loader.loadSnapshot = async () => { throw new Error("测试图片载入失败"); };
+      await editor.acceptResult();
+      check(!!state().pending?.acceptError && state().pending?.assetId === pending.assetId && !state().busy && content() === unchanged,
+        "采用失败保留已有结果、图片和选区，并提供弹窗错误状态");
+      await editor.acceptResult();
+      check(!!state().pending?.acceptError && !state().busy && all.length === requestCount, "采用再次失败仍保留结果，不重新发起消除请求");
+    } finally { loader.loadSnapshot = originalLoad; }
+    await editor.acceptResult();
+    check(!state().pending && !state().hasMask && !state().busy && all.length === requestCount, "采用重试成功后清空选区，始终使用已有消除结果");
   } finally {
     editor.cancelTask();
     for (const request of all) request.respond(new Response(null, { status: 503 }));

@@ -41,6 +41,9 @@ export type LayerItem = {
   visible: boolean;
   locked: boolean;
   selected: boolean;
+  kind?: "rect" | "ellipse" | "brush";
+  color?: string;
+  thumbnailUrl?: string;
 };
 
 export type DocumentSize = {
@@ -84,8 +87,12 @@ export type TextProperties = {
 export type PendingResult = {
   assetId: string; beforeUrl: string; afterUrl: string;
   documentId: string; revision: number;
+  acceptError?: string;
 };
+export type ConfirmationKind = "replace" | "reset" | "upload" | "close" | "switch";
+export type EditorConfirmation = { id: string; kind: ConfirmationKind };
 export type EditorView = {
+  confirmation?: EditorConfirmation;
   ready: boolean; busy: boolean; task: boolean; notice: string;
   noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
   tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";

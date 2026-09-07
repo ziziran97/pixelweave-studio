@@ -1,12 +1,149 @@
-import { useEffect, useRef } from "react";
-import type { PendingResult } from "../types";
+import { useEffect, useRef, useState } from "react";
+import { Scan, ZoomIn, ZoomOut } from "lucide-react";
+import type { DocumentSize, PendingResult } from "../types";
 
-export function ResultPreview({ result, busy, accept, discard }: { result: PendingResult; busy: boolean; accept: () => void; discard: () => void }) {
+type Camera = { zoom: number | null; x: number; y: number };
+
+export function ResultPreview({ result, size, busy, suspended = false, accept, discard }: {
+  result: PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean; accept: () => void; discard: () => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
-  return <dialog ref={dialog} className="result-dialog" aria-labelledby="result-title" onCancel={event => { event.preventDefault(); if (!busy) discard(); }}>
-    <h2 id="result-title">检查消除结果</h2><p>使用结果后，本轮选区会清空；放弃后选区保留，可继续调整或重试。</p>
-    <div className="result-images"><figure><figcaption>消除前</figcaption><img src={result.beforeUrl} alt="本次修改前的正式画面" /></figure><figure><figcaption>消除后</figcaption><img src={result.afterUrl} alt="待采用结果的正式画面" /></figure></div>
-    <div className="dialog-actions"><button className="secondary-button" disabled={busy} onClick={discard}>放弃结果</button><button className="primary-button" disabled={busy} onClick={accept}>{busy ? "正在使用…" : "使用消除结果"}</button></div>
+  const panes = useRef<Array<HTMLDivElement | null>>([]);
+  const drag = useRef<{ id: number; x: number; y: number } | null>(null);
+  const [bounds, setBounds] = useState({ width: 1, height: 1 });
+  const [camera, setCamera] = useState<Camera>({ zoom: null, x: size.width / 2, y: size.height / 2 });
+  const [loaded, setLoaded] = useState([false, false]);
+  const [loadError, setLoadError] = useState(false);
+  const loadGeneration = useRef(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const reloadPreview = () => {
+    if (busy) return;
+    drag.current = null;
+    setLoaded([false, false]); setLoadError(false);
+    setLoadAttempt(++loadGeneration.current);
+  };
+  const fitZoom = Math.min(1, bounds.width / size.width, bounds.height / size.height);
+  const minZoom = Math.min(.03, fitZoom), maxZoom = 4;
+  const zoom = camera.zoom ?? fitZoom;
+  const ready = loaded.every(Boolean) && !loadError && bounds.width > 1;
+
+  // One camera in image coordinates keeps both views aligned at every zoom level.
+  const constrain = (value: Camera, scale: number) => {
+    const halfWidth = bounds.width / (2 * scale), halfHeight = bounds.height / (2 * scale);
+    return { ...value,
+      x: halfWidth >= size.width / 2 ? size.width / 2 : Math.max(halfWidth, Math.min(size.width - halfWidth, value.x)),
+      y: halfHeight >= size.height / 2 ? size.height / 2 : Math.max(halfHeight, Math.min(size.height - halfHeight, value.y)),
+    };
+  };
+  const position = constrain(camera, zoom);
+  const changeZoom = (factor: number | "actual", anchor?: { x: number; y: number }) => {
+    if (busy || !ready) return;
+    drag.current = null;
+    setCamera(previous => {
+      const oldZoom = previous.zoom ?? fitZoom;
+      const nextZoom = Math.max(minZoom, Math.min(maxZoom, factor === "actual" ? 1 : oldZoom * factor));
+      const current = constrain(previous, oldZoom);
+      const dx = (anchor?.x ?? bounds.width / 2) - bounds.width / 2;
+      const dy = (anchor?.y ?? bounds.height / 2) - bounds.height / 2;
+      return constrain({ zoom: nextZoom, x: current.x + dx * (1 / oldZoom - 1 / nextZoom), y: current.y + dy * (1 / oldZoom - 1 / nextZoom) }, nextZoom);
+    });
+  };
+  const fit = () => {
+    drag.current = null;
+    setCamera({ zoom: null, x: size.width / 2, y: size.height / 2 });
+  };
+
+  useEffect(() => { if (!suspended && !dialog.current?.open) dialog.current?.showModal(); }, [suspended]);
+  useEffect(() => {
+    const observer = new ResizeObserver(() => {
+      const elements = panes.current.filter((pane): pane is HTMLDivElement => !!pane);
+      if (!elements.length) return;
+      const width = Math.min(...elements.map(pane => pane.clientWidth));
+      const height = Math.min(...elements.map(pane => pane.clientHeight));
+      setBounds(previous => previous.width === width && previous.height === height ? previous : { width, height });
+      drag.current = null;
+    });
+    panes.current.forEach(pane => { if (pane) observer.observe(pane); });
+    const release = () => { drag.current = null; };
+    window.addEventListener("blur", release);
+    return () => { observer.disconnect(); window.removeEventListener("blur", release); };
+  }, []);
+
+  useEffect(() => {
+    // Native non-passive listeners prevent wheel zoom from scrolling the dialog/page.
+    const elements = panes.current.filter((pane): pane is HTMLDivElement => !!pane);
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault(); event.stopPropagation();
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1);
+      changeZoom(Math.exp(-Math.max(-500, Math.min(500, delta)) * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    };
+    elements.forEach(pane => pane.addEventListener("wheel", wheel, { passive: false }));
+    return () => elements.forEach(pane => pane.removeEventListener("wheel", wheel));
+  }, [bounds, size.width, size.height, ready, busy]);
+
+  return <dialog ref={dialog} className="result-dialog" aria-labelledby="result-title"
+    onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}
+    onCancel={event => event.preventDefault()}>
+    <h2 id="result-title">检查消除结果</h2>
+    <p>使用后可继续编辑，点击右上角“替换图片”才会保存到任务。</p>
+    <div className="result-view-tools">
+      <span>滚轮缩放，拖动查看；两侧同步</span>
+      <div role="group" aria-label="结果查看">
+        <button aria-label="缩小对比图片" title="缩小" disabled={busy || !ready || zoom <= minZoom} onClick={() => changeZoom(1 / 1.25)}><ZoomOut size={16} /></button>
+        <output aria-label="对比缩放比例">{ready ? `${Math.round(zoom * 100)}%` : "—"}</output>
+        <button aria-label="放大对比图片" title="放大" disabled={busy || !ready || zoom >= maxZoom} onClick={() => changeZoom(1.25)}><ZoomIn size={16} /></button>
+        <button disabled={busy || !ready} aria-label="100% 查看对比图片" title="按图片实际尺寸查看" onClick={() => changeZoom("actual")}>100%</button>
+        <button disabled={busy || !ready} aria-label="适配对比图片" onClick={fit}><Scan size={16} />适配</button>
+      </div>
+    </div>
+    <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={url}>
+      <figcaption>{index === 0 ? "消除前" : "消除后"}</figcaption>
+      <div ref={element => { panes.current[index] = element; }} className="result-viewport" tabIndex={0}
+        aria-label={index === 0 ? "消除前对比视图" : "消除后对比视图"}
+        onPointerDown={event => {
+          if (event.button !== 0 || drag.current || busy || !ready) return;
+          event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+          drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+        }}
+        onPointerMove={event => {
+          const previous = drag.current;
+          if (!previous || previous.id !== event.pointerId || busy) return;
+          if (!(event.buttons & 1)) { drag.current = null; return; }
+          const dx = event.clientX - previous.x, dy = event.clientY - previous.y;
+          drag.current = { id: previous.id, x: event.clientX, y: event.clientY };
+          setCamera(current => {
+            const scale = current.zoom ?? fitZoom, center = constrain(current, scale);
+            return constrain({ ...current, x: center.x - dx / scale, y: center.y - dy / scale }, scale);
+          });
+        }}
+        onPointerUp={event => { if (drag.current?.id === event.pointerId && event.button === 0) drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
+        onKeyDown={event => {
+          const offset = ({ ArrowLeft: [-40, 0], ArrowRight: [40, 0], ArrowUp: [0, -40], ArrowDown: [0, 40] } as Record<string, number[]>)[event.key];
+          if (!offset || busy || !ready) return;
+          event.preventDefault();
+          setCamera(current => {
+            const scale = current.zoom ?? fitZoom, center = constrain(current, scale);
+            return constrain({ ...current, x: center.x + offset[0] / scale, y: center.y + offset[1] / scale }, scale);
+          });
+        }}>
+        <img key={loadAttempt} src={url} draggable={false} alt={index === 0 ? "本次消除前的图片" : "待采用的消除结果"}
+          style={{ width: size.width * zoom, height: size.height * zoom,
+            transform: `translate(${bounds.width / 2 - position.x * zoom}px, ${bounds.height / 2 - position.y * zoom}px)` }}
+          onLoad={() => { if (loadAttempt === loadGeneration.current) setLoaded(previous => previous.map((value, i) => i === index || value)); }}
+          onError={() => { if (loadAttempt === loadGeneration.current) setLoadError(true); }} />
+      </div>
+    </figure>)}</div>
+    {loadError ? <div className="result-recovery">
+      <p role="alert">对比图片加载失败，消除结果已保留。</p>
+      <button className="secondary-button" disabled={busy} onClick={reloadPreview}>重新加载预览</button>
+    </div> : !ready && <p role="status">正在加载对比图片…</p>}
+    {result.acceptError && <p className="result-error" role="alert">{result.acceptError}</p>}
+    <div className="result-footer">
+      <p>使用后清空本轮选区；放弃则保留选区。</p>
+      <div className="dialog-actions"><button className="secondary-button" disabled={busy} onClick={discard}>放弃结果</button>
+        <button className="primary-button" disabled={busy || !ready} onClick={accept}>{busy ? "正在使用…" : result.acceptError ? "重试使用结果" : "使用消除结果"}</button></div>
+    </div>
   </dialog>;
 }
