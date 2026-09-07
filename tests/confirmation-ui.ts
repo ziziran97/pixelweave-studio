@@ -26,8 +26,7 @@ try {
   root.render(createElement(App, { integration }));
   await settle(() => !!button("文字") && !button("文字").disabled);
   button("文字").click(); await paint();
-  const canvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!, bounds = canvas.getBoundingClientRect();
-  for (const type of ["mousedown", "mouseup"]) (type === "mousedown" ? canvas : document).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: type === "mousedown" ? 1 : 0, clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2 }));
+  button("添加文字").click();
   await settle(() => !!host.querySelector(".layer-card[data-purpose=content]"));
   const layerName = host.querySelector(".layer-card[data-purpose=content] strong")!.textContent;
   const start = async () => { submit().click(); await settle(() => !!dialog()?.open); };

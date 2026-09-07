@@ -48,6 +48,8 @@ button:not(:disabled):hover { filter: brightness(.97); }
 .tool-rail .tool-button, .tool-help .action-hint { width: 100%; }
 .tool-help { margin-top: auto; padding-top: 16px; }
 .settings-empty { margin: 4px 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.text-style-scope { margin: 7px 0 12px; font-size: 12px; font-weight: 600; color: #526e88; }
+.text-style-scope + .field-help { margin-top: -5px; }
 .shortcut-help-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 22px; border: 1px solid var(--line); border-radius: 12px; color: #233348; box-shadow: 0 16px 60px #23334830; }
 .shortcut-help-dialog::backdrop { background: #1e30494d; }
 .shortcut-list { margin: 18px 0; font-size: 12px; }

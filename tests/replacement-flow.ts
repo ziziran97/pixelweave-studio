@@ -22,7 +22,7 @@ export async function checkReplacementFlow(check: (condition: boolean, message: 
   };
   const { editor, state, click, dispose, confirm } = createEditor(adapter);
   try {
-    await editor.initialize(); editor.setTool("text"); click(40, 40); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
+    await editor.initialize(); editor.setTool("text"); await editor.addText({ x: 40, y: 40 }); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
     const text = editor.canvas.getActiveObject() as Textbox;
     text.set("text", "待检查文案"); text.exitEditing();
     await confirm(() => editor.submitReplacement());

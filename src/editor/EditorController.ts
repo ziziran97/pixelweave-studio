@@ -11,6 +11,7 @@ import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from
 import { makeSurface, renderDocument } from "./render";
 import { ensureFont, importFont } from "./fonts";
 import { applyTextProperties, textProperties, DEFAULT_TEXT } from "./text";
+import { textPlacement } from "./textPlacement";
 import { SelectionGesture } from "./SelectionGesture";
 import { ContentTextbox } from "./ContentTextbox";
 import { ContentBrush } from "./ContentBrush";
@@ -64,6 +65,7 @@ export class EditorController {
   private shapeDraft?: { object: Rect | Ellipse; tool: "rect" | "circle"; start: PointData };
   private shapeDefaults = { ...DEFAULT_SHAPE };
   private textDefaults = { ...DEFAULT_TEXT };
+  private lastTextAdd?: { id: string; generation: number; at: number };
   private source: "online" | "upload" = "online";
   private nameCounts: Record<string, number> = {};
   private colorPick?: { canvas: HTMLCanvasElement; apply: (color: string) => void };
@@ -93,8 +95,8 @@ export class EditorController {
   constructor(element: HTMLCanvasElement, private overlay: HTMLCanvasElement, private viewport: HTMLElement, private onChange: (view: EditorView) => void, private integration?: EditorIntegration) {
     this.canvas = new Canvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false,
       preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
-    this.canvas.on("selection:created", () => this.emit());
-    this.canvas.on("selection:updated", () => this.emit());
+    this.canvas.on("selection:created", () => this.selectionChanged());
+    this.canvas.on("selection:updated", () => this.selectionChanged());
     this.canvas.on("selection:cleared", () => this.emit());
     this.canvas.on("object:modified", ({ target }) => {
       if (target instanceof Rect || target instanceof Ellipse) {
@@ -194,7 +196,7 @@ export class EditorController {
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
-      text: single instanceof Textbox ? textProperties(single) : this.tool === "text" ? { ...this.textDefaults } : undefined,
+      text: single instanceof Textbox ? textProperties(single) : this.tool === "text" && !selected.length ? { ...this.textDefaults } : undefined,
       shape: single instanceof Rect || single instanceof Ellipse ? shapeProperties(single) : { ...this.shapeDefaults },
       shapeKind: single instanceof Rect ? "rect" : single instanceof Ellipse ? "circle" : this.tool === "rect" || this.tool === "circle" ? this.tool : undefined,
       drawing: single instanceof Path ? { color: String(single.stroke ?? this.color), width: single.strokeWidth } : undefined,
@@ -362,7 +364,7 @@ export class EditorController {
     const cancelled = !!this.selection.draft;
     this.finishText(); this.cancelDraft(); this.tool = tool;
     this.canvas.discardActiveObject(); this.configure();
-    this.notice = tool === "text" ? "点击图片添加文字" : tool === "pan" ? "拖动画布平移；滚轮缩放" : tool === "erase" ? "选择需要消除的区域，选区不会自动提交" : "可选择、移动或编辑对象";
+    this.notice = tool === "text" ? "点击「添加文字」开始输入，也可选中已有文字继续编辑" : tool === "pan" ? "拖动画布平移；滚轮缩放" : tool === "erase" ? "选择需要消除的区域，选区不会自动提交" : "可选择、移动或编辑对象";
     if (cancelled) this.notice = "未完成选区已取消；已完成的选区保留";
     else if (tool === "erase") this.noticePresentation = "quiet";
     this.emit();
@@ -568,10 +570,10 @@ export class EditorController {
 
   private configure() {
     const editable = !this.locked && !this.space;
-    const selection = editable && this.tool === "select";
+    const selection = editable && (this.tool === "select" || this.tool === "text");
     this.canvas.selection = selection; this.canvas.skipTargetFind = !selection;
     this.canvas.isDrawingMode = editable && this.tool === "draw";
-    this.canvas.defaultCursor = this.colorPick ? "crosshair" : this.tool === "draw" ? "none" : this.tool === "pan" || this.space ? "grab" : this.tool === "select" ? "default" : "crosshair";
+    this.canvas.defaultCursor = this.colorPick ? "crosshair" : this.tool === "draw" ? "none" : this.tool === "pan" || this.space ? "grab" : this.tool === "select" || this.tool === "text" ? "default" : "crosshair";
     const brush = new ContentBrush(this.canvas); brush.color = this.color; brush.width = this.drawSize; this.canvas.freeDrawingBrush = brush; this.canvas.freeDrawingCursor = "none";
     this.canvas.requestRenderAll();
   }
@@ -609,7 +611,6 @@ export class EditorController {
     const raw = this.canvas.getScenePoint(event.e);
     if (raw.x < 0 || raw.y < 0 || raw.x > this.size.width || raw.y > this.size.height) { this.gestureActive = false; return; }
     const point = this.scene(event);
-    if (this.tool === "text") { void this.addText(point); return; }
     if (this.tool === "rect" || this.tool === "circle") {
       const properties = { left: point.x, top: point.y, originX: "left" as const, originY: "top" as const,
         selectable: false, evented: false, excludeFromExport: true };
@@ -687,20 +688,58 @@ export class EditorController {
     this.commitMaskStroke(stroke);
   }
 
-  private async addText(point: PointData) {
+  async addText(point?: PointData) {
+    if (!this.ready || this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    const recent = this.lastTextAdd;
+    if (!point && recent?.generation === this.generation && performance.now() - recent.at < 350) {
+      const previous = this.canvas.getObjects().find(object => object.editorId === recent.id);
+      if (previous instanceof Textbox && previous === this.canvas.getActiveObject() && previous.visible && !previous.editorLocked) {
+        this.canvas.setActiveObject(previous); previous.enterEditing(); previous.hiddenTextarea?.focus({ preventScroll: true });
+        return;
+      }
+    }
+    const active = this.canvas.getActiveObject();
+    const properties = active instanceof Textbox ? textProperties(active) : { ...this.textDefaults };
+    this.finishText(); this.cancelDraft(); this.tool = "text";
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try {
-      await ensureFont(this.textDefaults.fontFamily, this.textDefaults.fontWeight);
+      await ensureFont(properties.fontFamily, properties.fontWeight);
       if (this.disposed || token !== this.generation) return;
-      const text = new ContentTextbox("输入文案", { left: point.x, top: point.y, originX: "left", originY: "top",
+      const visibleArea = () => {
+        const [zoom, , , , x, y] = this.canvas.viewportTransform;
+        return { left: Math.max(0, -x / zoom), top: Math.max(0, -y / zoom),
+          right: Math.min(this.size.width, (this.canvas.width - x) / zoom), bottom: Math.min(this.size.height, (this.canvas.height - y) / zoom) };
+      };
+      let area = visibleArea();
+      if (!point && (area.right <= area.left || area.bottom <= area.top)) { this.fit(); area = visibleArea(); }
+      const text = new ContentTextbox("双击编辑文字", { left: point?.x ?? 0, top: point?.y ?? 0, originX: "left", originY: "top",
         width: Math.min(420, this.size.width * .42), fontSize: Math.round(Math.max(24, this.size.width * .035)), fontFamily: "Microsoft YaHei", fill: this.color,
         splitByGrapheme: true, editorId: uid("text"), editorName: "文案", editorRole: "text", editorPurpose: "content" });
-      applyTextProperties(text, this.textDefaults);
-      this.canvas.add(text); this.tool = "select"; this.canvas.setActiveObject(text);
-      this.notice = "文案已创建，可输入内容或调整文字属性";
+      applyTextProperties(text, properties);
+      if (!point) {
+        text.set({ width: Math.min(text.width, (area.right - area.left) * .8) }); text.initDimensions();
+        const occupied = this.canvas.getObjects().filter(object => object instanceof Textbox && object.visible).map(object => object.getCenterPoint());
+        const center = textPlacement(area, text.getBoundingRect(), occupied, this.canvas.getZoom());
+        text.setPositionByOrigin(new Point(center.x, center.y), "center", "center");
+      }
+      this.textDefaults = { ...properties };
+      this.canvas.add(text); this.canvas.setActiveObject(text);
+      this.notice = `已添加文字，当前共 ${this.canvas.getObjects().filter(object => object instanceof Textbox).length} 段；可直接输入或拖动调整位置`;
       this.busy = false; this.configure(); this.commit(); text.enterEditing(); text.selectAll();
+      this.lastTextAdd = { id: text.editorId!, generation: this.generation, at: performance.now() };
     } catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
+  }
+
+  private selectionChanged() {
+    if (this.tool === "select" || this.tool === "text") {
+      const selected = this.canvas.getActiveObjects();
+      if (selected.length === 1) {
+        this.tool = selected[0] instanceof Textbox ? "text" : "select";
+        this.configure();
+      }
+    }
+    this.emit();
   }
 
   selectLayer(id: string) {

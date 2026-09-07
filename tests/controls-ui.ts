@@ -76,14 +76,22 @@ try {
   button("绘制").click(); await paint();
   check(!!button("展开图层"), "切换工具不自动展开图层");
   button("文字").click(); await paint();
-  const canvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!, bounds = canvas.getBoundingClientRect();
-  for (const type of ["mousedown", "mouseup"]) (type === "mousedown" ? canvas : document).dispatchEvent(new MouseEvent(type, {
-    bubbles: true, cancelable: true, button: 0, buttons: type === "mousedown" ? 1 : 0,
-    clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2,
-  }));
+  const canvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!;
+  button("添加文字").click();
   await settle(() => !!host.querySelector(".layer-card.selected[data-purpose=content]"));
   check(!!button("展开图层"), "新增文字不自动展开图层");
   const selectedLayer = host.querySelector(".layer-card.selected");
+  const textZoom = zoom(), textWidth = viewport().clientWidth;
+  const emptyBounds = canvas.getBoundingClientRect();
+  for (const type of ["mousedown", "mouseup"]) (type === "mousedown" ? canvas : document).dispatchEvent(new MouseEvent(type, {
+    bubbles: true, cancelable: true, button: 0, buttons: type === "mousedown" ? 1 : 0,
+    clientX: emptyBounds.left + 8, clientY: emptyBounds.top + 8,
+  }));
+  await paint();
+  check(!host.querySelector(".layer-card.selected") && !settingsHidden() && settings().textContent!.includes("新文字样式") && !settings().querySelector(".settings-empty") && button("文字").getAttribute("aria-pressed") === "true", "添加文字后点图片外空白处，取消选择但继续停留文字工作区");
+  check(viewport().clientWidth === textWidth && zoom() === textZoom && host.querySelectorAll('.layer-card[data-purpose=content]').length === 1, "结束文字编辑不新增对象、不改变布局和缩放");
+  selectedLayer!.querySelector<HTMLButtonElement>(".layer-select")!.click(); await paint();
+  check(settings().textContent!.includes("当前文字属性") && host.querySelector(".layer-card.selected") === selectedLayer, "重新选择已有文字显示当前属性");
   button("收起工具属性").click(); await paint();
   check(settingsHidden() && host.querySelector(".layer-card.selected") === selectedLayer, "收起属性保留当前文字选择");
   button("操作帮助").click(); await paint();

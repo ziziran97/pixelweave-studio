@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TextProperties } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { ColorField } from "./ColorField";
+import { Plus } from "lucide-react";
 import { FONT_OPTIONS } from "../editor/fonts";
 
 export function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
@@ -16,12 +17,15 @@ export function NumberField({ label, value, min, max, step = 1, onChange }: { la
     onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur(); }} /></label>;
 }
 
-export function TextPanel({ text, engine, disabled }: { text: TextProperties; engine: EditorController; disabled: boolean }) {
+export function TextPanel({ text, engine, disabled, selected }: { text: TextProperties; engine: EditorController; disabled: boolean; selected: boolean }) {
   const [fonts, setFonts] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const update = (patch: Partial<TextProperties>) => void engine.updateText({ ...text, ...patch });
   const allFonts = [...new Set([...FONT_OPTIONS, ...fonts, ...engine.getFontFamilies(), text.fontFamily])];
   return <fieldset disabled={disabled} className="text-properties">
+    <button className="primary-button full" aria-label="添加文字" onClick={() => void engine.addText()}><Plus size={17} />添加文字</button>
+    <p className="text-style-scope">{selected ? "当前文字属性" : "新文字样式"}</p>
+    {!selected && <p className="field-help">以下样式用于下一次添加，不影响已有文字。</p>}
     <label className="property-field"><span>字体</span><select aria-label="字体" value={text.fontFamily} onChange={event => update({ fontFamily: event.target.value })}>{allFonts.map(font => <option key={font}>{font}</option>)}</select></label>
     <div className="property-grid">
       <NumberField label="字号" value={text.fontSize} min={8} max={500} onChange={fontSize => update({ fontSize })} />

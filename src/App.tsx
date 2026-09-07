@@ -22,8 +22,9 @@ type EditorIconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 type EditorIcon = ComponentType<EditorIconProps>;
 
 const TOOLS: Array<{ id: ToolId; label: string; icon: EditorIcon }> = [
-  { id: "erase", label: "消除笔", icon: Eraser }, { id: "text", label: "文字", icon: Type },
+  { id: "erase", label: "消除笔", icon: Eraser },
   { id: "draw", label: "绘制", icon: Brush },
+  { id: "text", label: "文字", icon: Type },
   { id: "adjust", label: "调色", icon: SlidersHorizontal },
 ];
 const EMPTY: EditorView = {
@@ -100,8 +101,9 @@ export default function App({ integration }: { integration?: EditorIntegration }
     // Wait for canvas gestures to finish before changing the available canvas space.
     if (canvasInteracting || locked || view.unfinishedSelection) return;
     if (settingsContext.current === panelContext) return;
+    const deselectedText = panelContext === "text:text:new" && settingsContext.current.startsWith("text:");
     settingsContext.current = panelContext;
-    if (panelContext && !settingsOpen) {
+    if (panelContext && !settingsOpen && !deselectedText) {
       engine?.zoomTo(view.zoom);
       setSettingsOpen(true);
     }
@@ -143,7 +145,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
             <div className="toggle-grid"><button className={view.adjustments.grayscale ? "selected" : ""} onClick={() => adjust("grayscale", !view.adjustments.grayscale, true)}>黑白</button><button className={view.adjustments.sepia ? "selected" : ""} onClick={() => adjust("sepia", !view.adjustments.sepia, true)}>复古</button></div>
             <button className="secondary-button full" onClick={() => engine?.setAdjustments(DEFAULT_ADJUSTMENTS, true)}>重置调色</button>
           </fieldset> : <>
-            {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} />
+            {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} />
               : showDrawingPanel && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} />
               : <p className="settings-empty">{view.selectionCount > 1 ? "选中单个图层可调整属性。" : "选择工具或图层以调整属性。"}</p>}
           </>}
@@ -159,7 +161,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
           <div className="canvas-controls">
           <div className="zoom-control" role="group" aria-label="画布操作">
             <div className="canvas-mode-controls" role="group" aria-label="画布模式">
-              <ActionButton hint="选择并编辑文字、图形" aria-label="选择" aria-pressed={view.tool === "select"} disabled={locked} onClick={() => engine?.setTool("select")}><MousePointer2 /></ActionButton>
+              <ActionButton hint="选择并编辑文字、图形" aria-label="选择" aria-pressed={view.tool === "select" || view.tool === "text"} disabled={locked} onClick={() => engine?.setTool("select")}><MousePointer2 /></ActionButton>
               <ActionButton hint="拖动画布；按住空格可临时平移" aria-label="平移" aria-pressed={view.tool === "pan"} disabled={locked} onClick={() => engine?.setTool("pan")}><Hand /></ActionButton>
             </div>
             <div className="canvas-zoom-controls" role="group" aria-label="缩放查看">

@@ -11,6 +11,29 @@ async function load(path) {
 }
 const { applyResult, History, sameDocumentContent } = await load("../src/editor/model.ts");
 const { binaryPixels } = await load("../src/editor/geometry.ts");
+const { textPlacement } = await load("../src/editor/textPlacement.ts");
+
+test("new text staggers visibly, stays inside the visible image and respects zoom", () => {
+  const area = { left: 0, top: 0, right: 600, bottom: 400 }, size = { width: 200, height: 50 };
+  const first = textPlacement(area, size, [], 1);
+  assert.deepEqual(first, { x: 300, y: 200 });
+  const second = textPlacement(area, size, [first], 1);
+  assert.ok(second.x > first.x && second.y > first.y);
+  const zoomed = textPlacement(area, size, [first], 4);
+  assert.equal((zoomed.x - first.x) * 4, second.x - first.x);
+  const occupied = [];
+  for (let n = 0; n < 30; n++) {
+    const next = textPlacement(area, size, occupied, 1);
+    assert.ok(next.x >= 100 && next.x <= 500 && next.y >= 25 && next.y <= 375);
+    assert.ok(occupied.every(point => Math.hypot(next.x - point.x, next.y - point.y) >= 20));
+    occupied.push(next);
+  }
+  const narrow = { left: 700, top: 300, right: 800, bottom: 325 };
+  const crowded = textPlacement(narrow, { width: 80, height: 25 }, [{ x: 750, y: 312.5 }], 1);
+  assert.ok(crowded.x >= 740 && crowded.x <= 760 && crowded.y === 312.5);
+  assert.notEqual(crowded.x, 750);
+  assert.deepEqual(textPlacement(narrow, { width: 500, height: 500 }, [], 1), { x: 750, y: 312.5 });
+});
 const snapshot = () => ({
   size: { width: 4096, height: 2160 },
   objects: [

@@ -50,6 +50,45 @@ export async function picture(color = "#123456", width = 512, height = 384, form
   return toBlob(canvas, format, 1);
 }
 
+export async function checkTextWorkspace(check: (condition: boolean, message: string) => void) {
+  const { editor, state, click, dispose } = createEditor();
+  try {
+    await editor.initialize(); editor.setTool("text"); click(50, 50); click(120, 120);
+    check(state().tool === "text" && state().layers.length === 1 && !state().dirty, "文字工作区点击画布只选择，不自动新增文字");
+    await editor.updateText({ ...state().text!, fontSize: 48, fill: "#ff0000" });
+    check(!state().dirty && !state().canUndo, "新文字样式不修改文档或产生撤销历史");
+    const firstAdd = editor.addText(); const duplicateAdd = editor.addText(); await Promise.all([firstAdd, duplicateAdd]);
+    const first = editor.canvas.getActiveObject() as Textbox;
+    check(state().layers.length === 2 && first.isEditing && first.fontSize === 48 && first.fill === "#ff0000", "显式添加一次创建一段文字并直接输入，采用预设样式且阻止处理中重复添加");
+    await editor.addText();
+    check(state().layers.length === 2 && editor.canvas.getActiveObject() === first && first.isEditing, "创建完成后短时间误连点不重复添加，仍可输入当前文字");
+    await new Promise(resolve => setTimeout(resolve, 370));
+    await editor.addText();
+    const staggered = editor.canvas.getActiveObject() as Textbox;
+    const before = first.getCenterPoint(), after = staggered.getCenterPoint();
+    check(state().layers.length === 3 && after.x > before.x && after.y > before.y && staggered.isEditing, "正常再次点击可新增，文字向右下错开并立即输入");
+    staggered.exitEditing(); editor.deleteSelected();
+    editor.selectLayer(first.editorId!);
+    click(4, 4);
+    check(!first.isEditing && !state().selectedId && state().tool === "text" && !!state().text, "取消文字选择后仍提供新文字样式");
+    await editor.updateText({ ...state().text!, fontSize: 64, fill: "#0000ff" });
+    check(first.fontSize === 48 && first.fill === "#ff0000", "未选择时调整新文字样式不改写已有文字");
+    editor.zoomTo(4); await editor.addText();
+    const second = editor.canvas.getActiveObject() as Textbox;
+    const center = second.getCenterPoint().transform(editor.canvas.viewportTransform);
+    check(second.fontSize === 64 && second.fill === "#0000ff" && center.x > 0 && center.x < editor.canvas.width && center.y > 0 && center.y < editor.canvas.height, "放大后新文字采用新样式并落在当前可见图片区域");
+    second.exitEditing(); editor.selectLayer(first.editorId!);
+    check(state().tool === "text" && state().text?.fontSize === 48, "选中旧文字时回显旧文字的实际属性");
+    await editor.updateText({ ...state().text!, fontSize: 52 });
+    check(Number(first.fontSize) === 52 && second.fontSize === 64, "修改选中文字不会影响其他文字");
+    editor.updateLayer(first.editorId!, { locked: true });
+    await editor.updateText({ ...state().text!, fontSize: 30 });
+    check(Number(first.fontSize) === 52 && !!first.editorLocked && !state().selectedId, "锁定移除文字选择后，修改新文字样式不会改写锁定图层");
+    editor.selectLayer(second.editorId!); editor.deleteSelected(); await editor.undo();
+    check(state().layers.some(layer => layer.id === second.editorId), "新增文字仍支持删除和撤销恢复");
+  } finally { dispose(); }
+}
+
 export async function checkEditingTools(check: (condition: boolean, message: string) => void) {
   const source = await picture(); let submitted!: ReplacementInput;
   const integration: EditorIntegration = {
@@ -109,7 +148,7 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     window.dispatchEvent(new Event("blur")); mouse("mouseup", 100, 330);
     check(state().layers.length === pathCount, "画笔失焦取消未完成笔迹，迟到松手不补画");
 
-    editor.setTool("text"); click(70, 120); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
+    editor.setTool("text"); await editor.addText({ x: 70, y: 120 }); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
     let text = editor.canvas.getActiveObject() as ContentTextbox;
     text.text = "商品文案\n第二行"; text.exitEditing(); text.initDimensions();
     await editor.updateText({ ...state().text!, fontSize: 24, fontStyle: "italic", background: true, backgroundColor: "#ffffff", backgroundPadding: 14, backgroundRadius: 6 });
