@@ -448,6 +448,7 @@ export class EditorController {
       this.cancelTask(); this.discardResult(); this.cancelDraft(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
       this.generation++; this.revision++; this.history.reset(this.snapshot());
       this.tool = "select"; this.notice = "图片已载入，可继续编辑；点击「替换图片」后保存到任务。"; this.fit();
+      return true;
     } catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.collect(); this.emit(); } }
   }

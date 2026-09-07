@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import App from "../src/App";
-import { frame, settle } from "./editing-tools";
+import { frame, picture, settle } from "./editing-tools";
 import "../src/styles.css";
 
 const reports: string[] = [];
@@ -14,7 +14,57 @@ const zoom = () => host.querySelector("output[aria-label='当前缩放比例']")
 const viewport = () => host.querySelector<HTMLElement>(".canvas-viewport")!;
 try {
   root.render(createElement(App));
-  await settle(() => !!button("收起图层") && !button("收起图层").disabled);
+  await settle(() => !!button("收起图层") && !button("收起图层").disabled && button("消除笔").getAttribute("aria-pressed") === "true");
+  const settings = () => host.querySelector<HTMLElement>(".settings-panel")!;
+  const settingsHidden = () => getComputedStyle(settings()).display === "none";
+  const initialWidth = viewport().clientWidth;
+  check(!settingsHidden() && !host.querySelector(".tip-card") && button("消除笔").getAttribute("aria-pressed") === "true", "初始选中消除笔并展开属性，不显示常驻说明卡片");
+  check([...host.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === "开始消除")!.disabled && host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.disabled && button("撤销").disabled, "默认消除模式无选区、不处理图片、不产生草稿修改");
+  const help = button("操作帮助");
+  const helpTip = () => document.getElementById(help.getAttribute("aria-describedby") ?? "");
+  const delay = () => new Promise(resolve => setTimeout(resolve, 360));
+  help.focus({ preventScroll: true }); await paint();
+  const hintBox = helpTip()!.getBoundingClientRect(), helpBox = help.getBoundingClientRect();
+  check(helpTip()!.textContent === "操作说明与快捷键" && Math.abs(hintBox.left - helpBox.right - 8) < 1 && Math.abs(hintBox.top + hintBox.height / 2 - helpBox.top - helpBox.height / 2) < 1, "帮助提示文案对应内容，紧贴按钮右侧并垂直居中");
+  help.click(); await paint();
+  check(!!host.querySelector("dialog[open] #shortcut-help-title") && !settingsHidden() && viewport().clientWidth === initialWidth && !helpTip(), "打开帮助立即隐藏提示，不改变属性栏或画布布局");
+  host.querySelector("dialog")!.dispatchEvent(new Event("cancel", { bubbles: false, cancelable: true })); await paint();
+  await delay();
+  check(!host.querySelector(".shortcut-help-dialog") && document.activeElement === help && !helpTip(), "Esc 取消帮助返回入口焦点，等待后也不残留提示");
+  help.blur(); help.focus({ preventScroll: true }); await paint();
+  check(!!helpTip(), "键盘重新聚焦帮助入口可再次显示提示");
+  help.click(); await paint(); button("关闭操作帮助").click(); await paint(); await delay();
+  check(document.activeElement === help && !helpTip(), "关闭按钮返回帮助入口后不残留提示");
+  help.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })); await delay();
+  check(!helpTip(), "弹窗关闭后的悬停恢复不会自动显示提示");
+  help.blur();
+  window.dispatchEvent(new PointerEvent("pointermove", { clientX: helpBox.right + 30, clientY: helpBox.top, bubbles: true }));
+  help.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })); await paint();
+  check(!helpTip(), "鼠标重新移入时短暂停留后才显示提示");
+  await settle(() => !!helpTip());
+  check(!!helpTip(), "鼠标移开再移入帮助入口可再次显示提示");
+  help.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })); await paint();
+  check(!helpTip(), "移开帮助入口立即隐藏提示");
+  button("收起工具属性").click(); await paint();
+  const openingWidth = viewport().clientWidth, openingZoom = zoom();
+  check(settingsHidden() && openingWidth > initialWidth, "默认消除笔面板仍可手动收起以释放空间");
+  const centerPixels = () => {
+    const surface = host.querySelector<HTMLCanvasElement>(".lower-canvas")!;
+    return surface.getContext("2d")!.getImageData(Math.floor(surface.width / 2) - 10, Math.floor(surface.height / 2) - 10, 20, 20).data;
+  };
+  const centerBefore = centerPixels();
+  button("绘制").click(); await paint();
+  const centerAfter = centerPixels();
+  check(!settingsHidden() && viewport().clientWidth < openingWidth && zoom() === openingZoom, "点击工具展开属性，保持原有缩放");
+  check(centerBefore.every((value, i) => Math.abs(value - centerAfter[i]) <= 2), "属性展开保持画布中心对应的图片内容");
+  button("选择").click(); await paint();
+  check(!settingsHidden() && settings().textContent!.includes("选择工具或图层"), "取消工具后保留面板位置，仅显示简短选择提示");
+  button("收起工具属性").click(); await paint();
+  check(settingsHidden() && viewport().clientWidth === openingWidth && zoom() === openingZoom && document.activeElement === viewport(), "手动收起释放空间并将焦点移回画布");
+  button("绘制").click(); await paint();
+  button("收起工具属性").click(); await paint();
+  button("绘制").click(); await paint();
+  check(!settingsHidden() && button("绘制").getAttribute("aria-pressed") === "true", "再次点击当前工具可展开属性，不需切换工具");
   check(!host.querySelector(".top-actions")!.textContent!.includes("上传") && host.querySelector(".top-right .upload-button")!.textContent === "上传本地图片", "上传入口移至右上角，名称明确本地来源");
   check(host.querySelector(".top-right .upload-button")!.getAttribute("aria-describedby") !== null && host.querySelector(".top-right")!.textContent!.includes("暂不替换任务图片"), "上传说明区分载入草稿和提交任务");
   check(host.querySelectorAll(".canvas-controls .zoom-control > [role=group]").length === 4, "底部操作按模式、缩放、对比、图层分组");
@@ -34,6 +84,26 @@ try {
   await settle(() => !!host.querySelector(".layer-card.selected[data-purpose=content]"));
   check(!!button("展开图层"), "新增文字不自动展开图层");
   const selectedLayer = host.querySelector(".layer-card.selected");
+  button("收起工具属性").click(); await paint();
+  check(settingsHidden() && host.querySelector(".layer-card.selected") === selectedLayer, "收起属性保留当前文字选择");
+  button("操作帮助").click(); await paint();
+  host.querySelector("dialog button")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true })); await paint();
+  check(host.querySelector(".layer-card.selected") === selectedLayer, "帮助弹窗内快捷键不误删画布对象");
+  button("关闭操作帮助").click(); await paint();
+  button("文字").click(); await paint();
+  button("选择").click(); await paint();
+  button("收起工具属性").click(); await paint();
+  const selectionBounds = canvas.getBoundingClientRect();
+  const selectPoint = { clientX: selectionBounds.left + selectionBounds.width / 2 + 10, clientY: selectionBounds.top + selectionBounds.height / 2 + 10 };
+  canvas.dispatchEvent(new PointerEvent("pointerdown", { ...selectPoint, pointerId: 41, button: 0, buttons: 1, bubbles: true }));
+  canvas.dispatchEvent(new MouseEvent("mousedown", { ...selectPoint, button: 0, buttons: 1, bubbles: true })); await paint();
+  check(settingsHidden() && host.querySelector(".layer-card.selected") === selectedLayer, "画布按下选中文字时不立即展开属性或改变视野");
+  window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 42, button: 0, buttons: 0, bubbles: true }));
+  window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 41, button: 2, buttons: 1, bubbles: true })); await paint();
+  check(settingsHidden(), "其他指针或右键松开不提前展开属性");
+  document.dispatchEvent(new MouseEvent("mouseup", { ...selectPoint, button: 0, buttons: 0, bubbles: true }));
+  window.dispatchEvent(new PointerEvent("pointerup", { ...selectPoint, pointerId: 41, button: 0, buttons: 0, bubbles: true })); await paint();
+  check(!settingsHidden() && host.querySelector(".layer-card.selected") === selectedLayer, "左键松开后展示对象属性，保留选择和图层身份");
   button("展开图层").click(); await paint();
   check(viewport().clientWidth === width && zoom() === initialZoom && host.querySelector(".layer-card.selected") === selectedLayer, "展开恢复空间且保持文字选中状态");
   button("100% 查看").click(); await paint();
@@ -88,5 +158,53 @@ try {
   check(zoomButtons.every(item => item.getBoundingClientRect().top === zoomButtons[0].getBoundingClientRect().top), "较窄空间中缩放组完整保留在同一行");
   const controls = host.querySelector<HTMLElement>(".canvas-controls")!.getBoundingClientRect();
   check([...host.querySelectorAll<HTMLElement>(".zoom-control button")].every(item => { const box = item.getBoundingClientRect(); return box.left >= controls.left && box.right <= controls.right; }), "较窄画布的操作按钮不溢出");
+  host.style.width = ""; await paint();
+  const fileInput = host.querySelector<HTMLInputElement>("input[type=file][accept='.jpg,.jpeg']")!;
+  const upload = () => host.querySelector<HTMLButtonElement>(".upload-button")!;
+  const confirmation = () => host.querySelector<HTMLDialogElement>(".confirmation-dialog");
+  const chooseFile = async (file?: File) => {
+    const files = new DataTransfer(); if (file) files.items.add(file);
+    fileInput.files = files.files; fileInput.dispatchEvent(new Event("change", { bubbles: true })); await paint();
+  };
+  for (const collapsed of [false, true]) {
+    button("调色").click(); await paint();
+    if (collapsed) { button("收起工具属性").click(); await paint(); }
+    const beforeSize = host.querySelector(".document-size")!.textContent;
+    const beforeLayers = host.querySelector(".layers-panel")!.textContent;
+    const originalState = () => button("调色").getAttribute("aria-pressed") === "true" && settingsHidden() === collapsed && host.querySelector(".document-size")!.textContent === beforeSize && host.querySelector(".layers-panel")!.textContent === beforeLayers;
+    const image = new File([await picture("#67a9cf", collapsed ? 640 : 512, 384)], "upload.jpg");
+    await chooseFile();
+    check(originalState() && !confirmation(), `属性栏${collapsed ? "收起" : "展开"}时取消文件选择保持工具、布局和草稿`);
+    await chooseFile(image); await settle(() => !!confirmation()?.open);
+    confirmation()!.querySelector<HTMLButtonElement>(".secondary-button")!.click(); await paint();
+    check(originalState(), `属性栏${collapsed ? "收起" : "展开"}时取消载入确认保持原状`);
+    await chooseFile(new File(["invalid JPEG"], "broken.jpg")); await settle(() => !!confirmation()?.open);
+    confirmation()!.querySelector<HTMLButtonElement>(".primary-button")!.click(); await paint();
+    await settle(() => !confirmation() && !upload().disabled);
+    check(originalState(), `属性栏${collapsed ? "收起" : "展开"}时上传无效文件保留工具、布局和草稿`);
+    await chooseFile(image); await settle(() => !!confirmation()?.open);
+    confirmation()!.querySelector<HTMLButtonElement>(".primary-button")!.click();
+    await settle(() => !upload().disabled && button("消除笔").getAttribute("aria-pressed") === "true"); await paint();
+    check(settingsHidden() === collapsed && settings().querySelector(".panel-heading")!.textContent!.includes("消除笔") && !settings().querySelector(".settings-empty"), `上传成功选中消除笔并保持属性栏${collapsed ? "收起" : "展开"}，不留下空白属性`);
+    check(host.querySelector(".document-size")!.textContent === `${collapsed ? 640 : 512} × 384 px` && [...host.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === "开始消除")!.disabled && button("撤销").disabled, "新图按实际尺寸载入，无选区、不自动消除、旧历史已清空");
+  }
+  button("消除笔").click(); await paint();
+  check(!settingsHidden(), "上传后再次点击消除笔仍可展开手动收起的属性栏");
+  const ratioWidth = () => host.querySelector("output[aria-label='当前缩放比例']")!.getBoundingClientRect().width;
+  const fixedWidth = ratioWidth();
+  for (let i = 0; i < 40 && !button("放大").disabled; i++) { button("放大").click(); await paint(); }
+  check(zoom() === "400%" && button("放大").disabled && !button("缩小").disabled, "达到 400% 禁用放大，仍可缩小");
+  button("放大").click(); await paint();
+  check(zoom() === "400%", "到达上限后不会继续放大");
+  button("缩小").click(); await paint();
+  check(!button("放大").disabled, "离开上限后放大恢复可用");
+  for (let i = 0; i < 40 && !button("缩小").disabled; i++) { button("缩小").click(); await paint(); }
+  check(zoom() === "3%" && button("缩小").disabled && !button("放大").disabled, "达到 3% 禁用缩小，仍可放大");
+  button("缩小").click(); await paint();
+  check(zoom() === "3%" && ratioWidth() === fixedWidth, "下限不可继续缩小，比例从三位变一位也不挤动布局");
+  button("100% 查看").click(); await paint();
+  check(zoom() === "100%" && !button("缩小").disabled && !button("放大").disabled, "100% 一键恢复实际比例，同时解除缩放极限禁用");
+  button("适配画布").click(); await paint();
+  check(!button("适配画布").textContent && !!button("适配画布").querySelector("svg") && button("适配画布").parentElement!.textContent!.includes("完整显示图片并居中") && Number(zoom()!.replace("%", "")) <= 100 && button("撤销").disabled && button("消除笔").getAttribute("aria-pressed") === "true", "图标适配入口保留说明，查看操作不产生历史或切换工具");
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { document.getElementById("results")!.textContent = reports.join("\n"); }

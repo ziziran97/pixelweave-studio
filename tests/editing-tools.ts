@@ -32,7 +32,7 @@ export function createEditor(integration?: EditorIntegration) {
     }));
   };
   return { editor, state: () => view, overlay, mouse,
-    confirm: (run: () => Promise<void>, accepted = true) => {
+    confirm: <T>(run: () => Promise<T>, accepted = true) => {
       const done = run();
       if (view.confirmation) editor.answerConfirmation(view.confirmation.id, accepted);
       return done;
