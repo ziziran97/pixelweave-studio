@@ -1,38 +1,43 @@
-import type { FabricObject } from "fabric";
+import type { FabricObject, SerializedObjectProps } from "fabric";
 
-export type ToolId =
-  | "select"
-  | "image"
-  | "erase"
-  | "draw"
-  | "text"
-  | "rect"
-  | "circle"
-  | "arrow"
-  | "adjust"
-  | "layers";
+export type ToolId = "select" | "pan" | "erase" | "draw" | "text" | "rect" | "circle" | "adjust";
+export type EraseMode = "brush" | "rect" | "freehand" | "lasso";
+export type ObjectPurpose = "base" | "content";
+export type EditorRole = "image" | "text" | "shape" | "drawing";
+export type PointData = { x: number; y: number };
 
-export type EraseMode = "brush" | "rect" | "ellipse" | "lasso";
-
-export type EditorRole =
-  | "image"
-  | "text"
-  | "shape"
-  | "drawing"
-  | "erase-mask";
-
-export type EditorObject = FabricObject & {
+export interface EditorMetadata {
   editorId?: string;
   editorName?: string;
   editorRole?: EditorRole;
+  editorPurpose?: ObjectPurpose;
   editorLocked?: boolean;
-  editorDraft?: boolean;
-};
+  editorAssetId?: string;
+  editorFilled?: boolean;
+  editorColor?: string;
+  editorLineWidth?: number;
+  editorLineStyle?: "solid" | "dashed";
+  editorRadius?: number;
+  editorTextBackground?: boolean;
+  editorTextBackgroundColor?: string;
+  editorTextPadding?: number;
+  editorTextRadius?: number;
+}
+
+declare module "fabric" {
+  interface FabricObject extends EditorMetadata {}
+  interface SerializedObjectProps extends EditorMetadata {}
+}
+
+export type EditorObject = FabricObject;
+export type ObjectData = Partial<SerializedObjectProps> & { type: string; src?: string; objects?: ObjectData[]; [key: string]: unknown };
+export type MaskStroke = { kind: "brush" | "rect" | "polygon"; operation: "add" | "subtract"; points: PointData[]; width: number; breaks?: number[] };
 
 export type LayerItem = {
   id: string;
   name: string;
   role: EditorRole;
+  purpose: ObjectPurpose;
   visible: boolean;
   locked: boolean;
   selected: boolean;
@@ -59,4 +64,41 @@ export const DEFAULT_ADJUSTMENTS: ImageAdjustments = {
   blur: 0,
   grayscale: false,
   sepia: false,
+};
+
+export type ShapeProperties = { filled: boolean; color: string; lineWidth: number; lineStyle: "solid" | "dashed"; radius: number };
+export type DocumentSnapshot = {
+  size: DocumentSize;
+  objects: ObjectData[];
+  masks: MaskStroke[];
+  source?: "online" | "upload";
+  adjustments: ImageAdjustments;
+};
+export type TextProperties = {
+  fontFamily: string; fontSize: number; fill: string; fontWeight: string; fontStyle: string;
+  background: boolean; backgroundColor: string; backgroundPadding: number; backgroundRadius: number;
+  textAlign: string; lineHeight: number; charSpacing: number;
+  stroke: string; strokeWidth: number; shadowColor: string; shadowBlur: number;
+  shadowOffsetX: number; shadowOffsetY: number;
+};
+export type PendingResult = {
+  assetId: string; beforeUrl: string; afterUrl: string;
+  documentId: string; revision: number;
+};
+export type EditorView = {
+  ready: boolean; busy: boolean; task: boolean; notice: string;
+  noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
+  tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";
+  brushSize: number; drawSize: number; color: string;
+  zoom: number; size: DocumentSize; layers: LayerItem[]; selectionCount: number;
+  shape: ShapeProperties; shapeKind?: "rect" | "circle"; drawing?: { color: string; width: number };
+  picking: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;
+  canSubmit: boolean; canUpload: boolean;
+  problemObjectId?: string;
+  selectedId?: string; selectedPurpose?: ObjectPurpose; text?: TextProperties;
+  masks: number; lassoPoints: number;
+  hasMask: boolean; maskHidden: boolean;
+  unfinishedSelection: boolean; canUndo: boolean; canRedo: boolean; dirty: boolean;
+  adjustments: ImageAdjustments; pending?: PendingResult;
+  originalUrl?: string; compareOriginal: boolean;
 };
