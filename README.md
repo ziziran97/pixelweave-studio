@@ -39,6 +39,16 @@ npm run dev
 
 默认地址为 `http://127.0.0.1:4175/`。端口占用时开发服务可能使用其他端口，以启动输出为准。支持 `?image=https://...` 指定初始图片，包含特殊字符的图片 URL 应编码；远程图片需要允许跨域读取。
 
+### 在线演示与部署
+
+Pages 首次启用并部署成功后，演示地址为 [ziziran97.github.io/pixelweave-studio](https://ziziran97.github.io/pixelweave-studio/)。演示站用于前端体验与评审，构建时将消除接口和默认远程图片地址置空，不接入真实任务保存服务；本地上传图片用于当前浏览器中的编辑。
+
+自动部署配置见 [.github/workflows/deploy-pages.yml](./.github/workflows/deploy-pages.yml)。推送到 `main` 或手动运行 `Deploy GitHub Pages` 时，使用 Node.js 24 安装依赖、运行单元测试、构建并部署 `dist`。仅该部署构建设置 `--base=/pixelweave-studio/`（根据仓库名生成），本地开发和宿主接入的默认路径保持不变。
+
+首次启用需要有 Pages 设置权限的仓库管理员或维护者，在 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**；随后在 **Actions → Deploy GitHub Pages → Run workflow** 选择 `main` 运行。只有代码推送权限的协作者无法完成首次站点设置。启用前构建可以通过，部署步骤会提示缺少 Pages 配置。
+
+发布完成需同时确认工作流成功、线上页面及脚本/样式可访问。浏览器测试页仅供本地开发验证，不随 `dist` 发布；后端联调与正式业务部署仍按下文的接口和宿主契约进行。
+
 ## 功能与操作
 
 ### 图片术语
