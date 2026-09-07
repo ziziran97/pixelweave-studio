@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import type { EditorView } from "../types";
 
-/** Eraser-only feedback floats above the image so it never changes canvas size. */
+/** Feedback floats above the image so transient notices never change canvas size. */
 export function EraserNotice({ view, cancelTask, locateProblem }: { view: EditorView; cancelTask: () => void; locateProblem?: () => void }) {
   const [dismissed, setDismissed] = useState<number | null>(null);
   const working = !view.ready || view.busy || view.task;

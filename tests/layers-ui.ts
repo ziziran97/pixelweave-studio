@@ -97,7 +97,7 @@ try {
   host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")!.click();
   await settle(() => !!host.querySelector(".has-problem"));
   check(!!button("展开图层") && saves === 0, "校验失败不自动展开面板，不调用保存");
-  host.querySelector<HTMLButtonElement>(".notice-bar button")!.click(); await paint();
+  host.querySelector<HTMLButtonElement>(".eraser-notice button")!.click(); await paint();
   check(!!button("收起图层") && (document.activeElement as HTMLElement).dataset.layerId === problemId && host.querySelector("output")!.textContent === zoom, "查看问题图层展开并聚焦，保留缩放");
   check(problemRow.textContent!.includes("已隐藏 · 已锁定") && problemRow.classList.contains("has-problem"), "问题定位保留隐藏锁定状态和异常提示");
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }

@@ -1,6 +1,7 @@
 import type { FabricObject, SerializedObjectProps } from "fabric";
 
 export type ToolId = "select" | "pan" | "erase" | "draw" | "text" | "rect" | "circle" | "adjust";
+export type WorkspaceId = "erase" | "draw" | "text" | "adjust";
 export type EraseMode = "brush" | "rect" | "freehand" | "lasso";
 export type ObjectPurpose = "base" | "content";
 export type EditorRole = "image" | "text" | "shape" | "drawing";
@@ -16,12 +17,13 @@ export interface EditorMetadata {
   editorFilled?: boolean;
   editorColor?: string;
   editorLineWidth?: number;
-  editorLineStyle?: "solid" | "dashed";
+  editorLineStyle?: ShapeLineStyle;
   editorRadius?: number;
   editorTextBackground?: boolean;
   editorTextBackgroundColor?: string;
   editorTextPadding?: number;
   editorTextRadius?: number;
+  editorTextShadowColor?: string;
 }
 
 declare module "fabric" {
@@ -41,6 +43,7 @@ export type LayerItem = {
   visible: boolean;
   locked: boolean;
   selected: boolean;
+  transparent?: boolean;
   kind?: "rect" | "ellipse" | "brush";
   color?: string;
   thumbnailUrl?: string;
@@ -69,7 +72,8 @@ export const DEFAULT_ADJUSTMENTS: ImageAdjustments = {
   sepia: false,
 };
 
-export type ShapeProperties = { filled: boolean; color: string; lineWidth: number; lineStyle: "solid" | "dashed"; radius: number };
+export type ShapeLineStyle = "solid" | "dashed" | "dense-dashed" | "dotted" | "dash-dot";
+export type ShapeProperties = { filled: boolean; color: string; lineWidth: number; lineStyle: ShapeLineStyle; radius: number; opacity: number };
 export type DocumentSnapshot = {
   size: DocumentSize;
   objects: ObjectData[];
@@ -96,10 +100,12 @@ export type EditorView = {
   ready: boolean; busy: boolean; task: boolean; notice: string;
   noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
   tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";
+  workspace: WorkspaceId; drawingTool: "draw" | "rect" | "circle"; propertiesRequest: number;
   brushSize: number; drawSize: number; color: string;
   zoom: number; size: DocumentSize; layers: LayerItem[]; selectionCount: number;
   shape: ShapeProperties; shapeKind?: "rect" | "circle"; drawing?: { color: string; width: number };
-  picking: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;
+  shapeRadiusMax?: number;
+  picking: boolean; colorEditing: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;
   canSubmit: boolean; canUpload: boolean;
   problemObjectId?: string;
   selectedId?: string; selectedPurpose?: ObjectPurpose; text?: TextProperties;

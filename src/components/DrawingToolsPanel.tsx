@@ -11,7 +11,9 @@ const MODES = [
 ] as const;
 
 export function DrawingToolsPanel({ view, engine, disabled }: { view: EditorView; engine: EditorController; disabled: boolean }) {
-  const mode = view.drawing ? "draw" : view.shapeKind ?? "draw";
+  const mode = view.drawing ? "draw" : view.shapeKind ?? view.drawingTool;
+  const label = MODES.find(item => item.id === mode)!.label;
+  const active = view.tool === mode;
   return <>
     <div className="drawing-mode-grid" role="group" aria-label="绘制类型">
       {MODES.map(({ id, label, icon: Icon }) => <button key={id} type="button" aria-label={label}
@@ -20,6 +22,8 @@ export function DrawingToolsPanel({ view, engine, disabled }: { view: EditorView
         <Icon size={20} /><span>{label}</span>
       </button>)}
     </div>
+    <p className="text-style-scope">{view.selectedId ? `当前${label}属性` : `新${label}样式`}</p>
+    {!view.selectedId && <p className="field-help">{active ? "以下样式用于新绘制，不影响已有内容。" : `以下样式用于新绘制；再次点击${label}开始绘制。`}</p>}
     {mode === "draw"
       ? <DrawingPanel key={view.selectedId ?? "new-drawing"} view={view} engine={engine} disabled={disabled || view.unfinishedSelection} />
       : <ShapePanel key={view.selectedId ?? mode} view={view} engine={engine} disabled={disabled} />}

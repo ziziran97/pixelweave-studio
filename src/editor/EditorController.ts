@@ -15,15 +15,18 @@ import { textPlacement } from "./textPlacement";
 import { SelectionGesture } from "./SelectionGesture";
 import { ContentTextbox } from "./ContentTextbox";
 import { ContentBrush } from "./ContentBrush";
-import { applyShapeProperties, shapeProperties, DEFAULT_SHAPE } from "./shape";
+import { DrawingCanvas } from "./DrawingCanvas";
+import { applyShapeProperties, shapeProperties, rectRadiusLimit, syncRectRadius, DEFAULT_SHAPE } from "./shape";
 import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } from "../integration";
-import type { ConfirmationKind, EditorConfirmation } from "../types";
+import type { ConfirmationKind, EditorConfirmation, WorkspaceId } from "../types";
 
 function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
   const color = ctx.strokeStyle, width = ctx.lineWidth;
   ctx.strokeStyle = "#fff"; ctx.lineWidth = width + halo * 2; ctx.stroke();
   ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
 }
+export type ColorChannel = "drawing" | "shape" | "fill" | "backgroundColor" | "stroke" | "shadowColor";
+export interface ColorEdit { preview(color: string): void; finish(apply: boolean): void }
 
 export class EditorController {
   readonly canvas: Canvas;
@@ -53,6 +56,10 @@ export class EditorController {
   private get notice() { return this.noticeValue; }
   private set notice(value: string) { this.noticeValue = value; this.noticeId++; this.noticePresentation = "transient"; }
   private tool: ToolId = "select";
+  private workspace: WorkspaceId = "erase";
+  private propertiesRequest = 0;
+  private changingSelection = false;
+  private propertyEdit = false;
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
   private operation: "add" | "subtract" = "add";
   private hasMask = false;
@@ -62,13 +69,17 @@ export class EditorController {
   private drawSize = 6;
   private color = "#2574d8";
   private size = { width: 1280, height: 800 };
-  private shapeDraft?: { object: Rect | Ellipse; tool: "rect" | "circle"; start: PointData };
+  private shapeDraft?: { object: Rect | Ellipse; tool: "rect" | "circle"; start: PointData; screenStart: PointData };
   private shapeDefaults = { ...DEFAULT_SHAPE };
   private textDefaults = { ...DEFAULT_TEXT };
   private lastTextAdd?: { id: string; generation: number; at: number };
   private source: "online" | "upload" = "online";
   private nameCounts: Record<string, number> = {};
-  private colorPick?: { canvas: HTMLCanvasElement; apply: (color: string) => void };
+  private colorPick?: { canvas: HTMLCanvasElement; apply: (color: string) => void; cancel?: () => void };
+  private colorEdit?: ColorEdit;
+  private colorLens?: HTMLDivElement;
+  private pickRequest = 0;
+  private preparingColorPick?: () => void;
   private submitting = false;
   private submissionStage = "";
   private submission?: ReplacementInput;
@@ -93,7 +104,7 @@ export class EditorController {
   private previewFrame = 0;
 
   constructor(element: HTMLCanvasElement, private overlay: HTMLCanvasElement, private viewport: HTMLElement, private onChange: (view: EditorView) => void, private integration?: EditorIntegration) {
-    this.canvas = new Canvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false,
+    this.canvas = new DrawingCanvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false, targetFindTolerance: 4,
       preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
     this.canvas.on("selection:created", () => this.selectionChanged());
     this.canvas.on("selection:updated", () => this.selectionChanged());
@@ -106,25 +117,34 @@ export class EditorController {
         else target.set({ rx: width / 2, ry: height / 2 });
         target.setPositionByOrigin(center, "center", "center"); target.setCoords();
       }
+      for (const object of target instanceof ActiveSelection ? target.getObjects() : [target]) {
+        if (object instanceof Rect) syncRectRadius(object, true);
+      }
       this.commit();
     });
     this.canvas.on("object:moving", () => this.emit());
-    this.canvas.on("object:scaling", () => this.emit());
+    this.canvas.on("object:scaling", ({ target }) => {
+      for (const object of target instanceof ActiveSelection ? target.getObjects() : [target]) {
+        if (object instanceof Rect) syncRectRadius(object);
+      }
+      this.emit();
+    });
     this.canvas.on("object:rotating", () => this.emit());
     this.canvas.on("text:editing:exited", () => this.commit());
     this.canvas.on("text:changed", () => this.emit());
     this.canvas.on("path:created", ({ path }) => {
       if (this.locked || this.tool !== "draw") { this.canvas.remove(path); return; }
-      path.set({ editorId: uid("drawing"), editorName: this.nextName("画笔"), editorRole: "drawing", editorPurpose: "content" });
+      path.set({ editorId: uid("drawing"), editorName: this.nextName("画笔"), editorRole: "drawing", editorPurpose: "content", strokeUniform: true });
       this.commit();
     });
     this.canvas.on("mouse:down", event => this.pointerDown(event));
+    this.canvas.upperCanvasEl.addEventListener("mousedown", this.captureColorDown, true);
     this.canvas.on("mouse:move", event => this.pointerMove(event));
     this.canvas.on("mouse:up", ({ e }) => this.pointerUp(e));
-    this.canvas.on("mouse:out", () => { this.cursor = undefined; this.selection.closing = false; this.scheduleOverlay(); });
+    this.canvas.on("mouse:out", () => { this.cursor = undefined; if (this.colorLens) this.colorLens.hidden = true; this.selection.closing = false; this.scheduleOverlay(); });
     this.canvas.on("mouse:wheel", ({ e }) => {
       e.preventDefault(); e.stopPropagation();
-      if (this.colorPick || (this.tool === "draw" && this.gestureActive) || this.space || (this.selection.draft && this.selection.mode !== "lasso")) return;
+      if (this.colorPick || this.colorEdit || this.shapeDraft || (this.tool === "draw" && this.gestureActive) || this.space || (this.selection.draft && this.selection.mode !== "lasso")) return;
       this.zoomTo(this.canvas.getZoom() * Math.pow(0.999, e.deltaY), this.canvas.getViewportPoint(e));
     });
     this.canvas.on("after:render", () => this.scheduleOverlay());
@@ -150,7 +170,7 @@ export class EditorController {
     this.configure(); this.emit();
   }
 
-  private get locked() { return !this.ready || !!this.confirmation || this.busy || !!this.job || !!this.pending || this.compareOriginal || !!this.colorPick || this.submitting || !!this.savedRecord || this.closed; }
+  private get locked() { return !this.ready || !!this.confirmation || this.busy || !!this.job || !!this.pending || this.compareOriginal || !!this.colorPick || !!this.colorEdit || this.submitting || !!this.savedRecord || this.closed; }
   private get dirty() { return !!this.original && JSON.stringify(this.snapshot()) !== JSON.stringify(this.original); }
   private get contentDirty() {
     if (!this.original) return false;
@@ -187,31 +207,33 @@ export class EditorController {
     const single = selected.length === 1 ? selected[0] : undefined;
     const view: EditorView = {
       ready: this.ready, busy: this.busy, task: !!this.job, notice: this.notice, noticeId: this.noticeId, noticePresentation: this.noticePresentation, tool: this.tool, eraseMode: this.selection.mode,
+      workspace: this.workspace, drawingTool: this.lastDrawingTool, propertiesRequest: this.propertiesRequest,
       maskOperation: this.operation, brushSize: this.brushSize, drawSize: this.drawSize, color: this.color,
       zoom: this.canvas.getZoom(), size: this.size,
       layers: this.canvas.getObjects().filter(object => object.editorId).map(object => ({ id: object.editorId!, name: object instanceof Textbox ? object.text.replace(/\s+/g, " ").trim().slice(0, 24) || "空白文字" : object.editorName ?? "图层",
         role: object.editorRole ?? "shape", purpose: object.editorPurpose ?? "content", visible: object.visible, locked: !!object.editorLocked,
-        selected: selected.includes(object),
+        selected: selected.includes(object), transparent: (object instanceof Rect || object instanceof Ellipse) && object.opacity === 0,
         kind: object instanceof Rect ? "rect" as const : object instanceof Ellipse ? "ellipse" as const : object instanceof Path ? "brush" as const : undefined,
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
-      text: single instanceof Textbox ? textProperties(single) : this.tool === "text" && !selected.length ? { ...this.textDefaults } : undefined,
+      text: single instanceof Textbox ? textProperties(single) : this.workspace === "text" && !selected.length ? { ...this.textDefaults } : undefined,
       shape: single instanceof Rect || single instanceof Ellipse ? shapeProperties(single) : { ...this.shapeDefaults },
-      shapeKind: single instanceof Rect ? "rect" : single instanceof Ellipse ? "circle" : this.tool === "rect" || this.tool === "circle" ? this.tool : undefined,
+      shapeRadiusMax: single instanceof Rect ? rectRadiusLimit(single) : undefined,
+      shapeKind: single instanceof Rect ? "rect" : single instanceof Ellipse ? "circle" : this.workspace === "draw" && this.lastDrawingTool !== "draw" ? this.lastDrawingTool : undefined,
       drawing: single instanceof Path ? { color: String(single.stroke ?? this.color), width: single.strokeWidth } : undefined,
-      picking: !!this.colorPick, submitting: this.submitting, submissionStage: this.submissionStage,
+      picking: !!this.colorPick, colorEditing: !!this.colorEdit, submitting: this.submitting, submissionStage: this.submissionStage,
       needsConfirmation: this.needsConfirmation, saved: !!this.savedRecord, closed: this.closed,
       canSubmit: !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft && this.contentDirty,
-      canUpload: this.ready && !this.confirmation && !this.busy && !this.submitting && !this.savedRecord && !this.closed && !this.colorPick && !this.drawingInProgress,
+      canUpload: this.ready && !this.confirmation && !this.busy && !this.submitting && !this.savedRecord && !this.closed && !this.colorPick && !this.colorEdit && !this.drawingInProgress,
       confirmation: this.confirmation,
       problemObjectId: this.problemObjectId,
       masks: this.masks.length,
       lassoPoints: this.selection.mode === "lasso" ? this.selection.draft?.points.length ?? 0 : 0,
       hasMask: this.hasMask, maskHidden: this.maskHidden,
       unfinishedSelection: !!this.selection.draft || !!this.shapeDraft || this.drawingInProgress,
-      canUndo: !this.locked && (!!this.selection.draft || !!this.shapeDraft || this.history.canUndo),
-      canRedo: !this.locked && !this.selection.draft && !this.shapeDraft && this.history.canRedo, dirty: this.ready && this.dirty,
+      canUndo: !this.locked && (!!this.selection.draft || !!this.shapeDraft || this.propertyEdit || this.history.canUndo),
+      canRedo: !this.locked && !this.selection.draft && !this.shapeDraft && !this.propertyEdit && this.history.canRedo, dirty: this.ready && this.dirty,
       adjustments: { ...this.adjustments }, pending: this.pending, compareOriginal: this.compareOriginal,
       originalUrl: this.original?.objects[0]?.editorAssetId ? this.assets.get(this.original.objects[0].editorAssetId).url : undefined,
     };
@@ -220,6 +242,7 @@ export class EditorController {
 
   private commit() {
     if (this.disposed || !this.ready || this.busy || this.job || this.pending || this.submitting || this.savedRecord || this.closed) return;
+    this.propertyEdit = false;
     if (this.history.push(this.snapshot())) { this.revision++; this.problemObjectId = undefined; }
     this.collect(); this.emit();
   }
@@ -252,7 +275,7 @@ export class EditorController {
   }
 
   async openImage(blob: Blob, name: string, confirm = true) {
-    if (this.disposed || this.confirmation || this.busy || this.submitting || this.savedRecord) return;
+    if (this.disposed || this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord) return;
     if (confirm && (this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("switch")) return;
     this.cancelTask(); this.discardResult(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
     this.finishText(); this.cancelDraft();
@@ -306,6 +329,7 @@ export class EditorController {
       return;
     }
     this.finishText(); this.commit();
+    const selectedIds = this.canvas.getActiveObjects().map(object => object.editorId);
     const index = this.history.index + (redo ? 1 : -1);
     const snapshot = this.history.entries[index]; if (!snapshot) return;
     if (sameDocumentContent(this.history.current, snapshot)) {
@@ -313,7 +337,15 @@ export class EditorController {
       this.notice = redo ? "已重做" : "已撤销"; this.emit(); return;
     }
     this.busy = true; this.configure(); this.emit();
-    try { await this.loadSnapshot(snapshot); if (!this.disposed) { this.history.index = index; this.revision++; this.notice = redo ? "已重做" : "已撤销"; } }
+    try {
+      await this.loadSnapshot(snapshot);
+      if (!this.disposed) {
+        const selected = this.canvas.getObjects().filter(object => selectedIds.includes(object.editorId) && object.editorPurpose !== "base" && object.visible && !object.editorLocked);
+        if (selected.length) this.canvas.setActiveObject(selected.length === 1 ? selected[0] : new ActiveSelection(selected, { canvas: this.canvas }));
+        this.syncSelectionWorkspace();
+        this.history.index = index; this.revision++; this.notice = redo ? "已重做" : "已撤销";
+      }
+    }
     catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
   }
@@ -330,7 +362,7 @@ export class EditorController {
   setCompare(value: boolean) {
     if (this.disposed || value === this.compareOriginal) return;
     if (value) {
-      if (this.confirmation || this.busy || this.job || this.pending || !this.ready || this.selection.draft || this.shapeDraft || this.drawingInProgress || this.submitting || this.savedRecord || this.closed || this.colorPick) return;
+      if (this.confirmation || this.busy || this.job || this.pending || !this.ready || this.selection.draft || this.shapeDraft || this.drawingInProgress || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit) return;
       this.finishText(); this.cancelDraft();
       this.editingViewport = [...this.canvas.viewportTransform]; this.editingFitted = this.fitted;
       this.compareOriginal = true;
@@ -360,19 +392,22 @@ export class EditorController {
   }
   setTool(tool: ToolId) {
     if (this.locked || this.tool === tool) return;
+    this.finishPropertyEdit();
     if (tool === "draw" || tool === "rect" || tool === "circle") this.lastDrawingTool = tool;
+    if (tool !== "select" && tool !== "pan") this.workspace = tool === "rect" || tool === "circle" ? "draw" : tool;
     const cancelled = !!this.selection.draft;
     this.finishText(); this.cancelDraft(); this.tool = tool;
-    this.canvas.discardActiveObject(); this.configure();
+    if (tool !== "select" && tool !== "pan") this.canvas.discardActiveObject();
+    this.configure();
     this.notice = tool === "text" ? "点击「添加文字」开始输入，也可选中已有文字继续编辑" : tool === "pan" ? "拖动画布平移；滚轮缩放" : tool === "erase" ? "选择需要消除的区域，选区不会自动提交" : "可选择、移动或编辑对象";
     if (cancelled) this.notice = "未完成选区已取消；已完成的选区保留";
-    else if (tool === "erase") this.noticePresentation = "quiet";
+    else this.noticePresentation = "quiet";
     this.emit();
   }
   setEraseMode(mode: EraseMode) {
     if (this.locked || (this.tool === "erase" && this.selection.mode === mode)) return;
     const cancelled = !!this.selection.draft;
-    this.cancelDraft(); this.selection.mode = mode; this.tool = "erase";
+    this.cancelDraft(); this.selection.mode = mode; this.tool = "erase"; this.workspace = "erase";
     this.notice = cancelled ? "未完成选区已取消；已完成的选区保留" : "选择需要消除的区域，选区不会自动提交";
     if (!cancelled) this.noticePresentation = "quiet";
     this.configure(); this.emit();
@@ -394,47 +429,133 @@ export class EditorController {
   }
   setDrawSize(size: number) { if (this.locked || this.drawingInProgress) return; this.drawSize = Math.max(1, Math.min(300, Math.round(size))); this.configure(); this.emit(); }
   setColor(color: string) { if (this.locked || this.drawingInProgress) return; this.color = color; this.shapeDefaults.color = color; this.configure(); this.emit(); }
-  updateShape(patch: Partial<ShapeProperties>) {
+  updateShape(patch: Partial<ShapeProperties>, commit = true) {
     if (this.locked || this.gestureActive) return;
     const object = this.canvas.getActiveObject();
     const selected = object instanceof Rect || object instanceof Ellipse ? object : undefined;
     if (selected?.editorLocked) return;
+    if (selected && !commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
     const next = { ...(selected ? shapeProperties(selected) : this.shapeDefaults), ...patch };
-    next.lineWidth = Math.max(1, Math.min(100, next.lineWidth)); next.radius = Math.max(0, next.radius);
+    next.lineWidth = Math.max(1, Math.min(100, next.lineWidth));
+    next.radius = Math.max(0, Math.min(selected instanceof Rect ? rectRadiusLimit(selected) : 500, next.radius));
+    next.opacity = Number.isFinite(next.opacity) ? Math.max(0, Math.min(100, Math.round(next.opacity))) : 100;
     this.shapeDefaults = next;
     if (patch.color) this.color = patch.color;
-    if (selected) { applyShapeProperties(selected, next); this.canvas.requestRenderAll(); this.commit(); }
+    if (selected) {
+      applyShapeProperties(selected, next); this.canvas.requestRenderAll();
+      if (commit) this.commit(); else this.emit();
+    }
     else this.emit();
   }
-  updateDrawing(patch: { color?: string; width?: number }) {
+  updateDrawing(patch: { color?: string; width?: number }, commit = true) {
     if (this.locked || this.drawingInProgress) return;
     const object = this.canvas.getActiveObject();
     if (!(object instanceof Path) || object.editorLocked) return;
+    if (!commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
     if (patch.color) { object.set("stroke", patch.color); this.color = patch.color; this.shapeDefaults.color = patch.color; }
     if (patch.width !== undefined) { this.drawSize = Math.max(1, Math.min(300, patch.width)); object.set("strokeWidth", this.drawSize); }
-    object.setCoords(); this.canvas.requestRenderAll(); this.commit();
+    object.setCoords(); this.canvas.requestRenderAll();
+    if (commit) this.commit(); else this.emit();
   }
-  async startColorPick(apply: (color: string) => void) {
-    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
-    this.finishText(); this.busy = true; this.configure(); this.emit();
-    const generation = this.generation;
+  finishPropertyEdit() { if (this.propertyEdit) this.commit(); }
+  beginColorEdit(channel: ColorChannel): ColorEdit | undefined {
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.canvas.getActiveObjects().length > 1) return;
+    this.finishText(); this.finishPropertyEdit();
+    const object = this.canvas.getActiveObject(), generation = this.generation;
+    const defaults = { color: this.color, shape: { ...this.shapeDefaults }, text: { ...this.textDefaults } };
+    const shape = object instanceof Rect || object instanceof Ellipse ? shapeProperties(object) : undefined;
+    const text = object instanceof Textbox ? textProperties(object) : undefined;
+    const shadowColorMetadata = object?.editorTextShadowColor;
+    const stroke = object instanceof Path ? object.stroke : undefined;
+    const valid = () => !this.disposed && generation === this.generation && this.colorEdit === edit;
+    const edit: ColorEdit = {
+      preview: color => {
+        if (!valid() || !/^#[\da-f]{6}$/i.test(color)) return;
+        if (channel === "shape" || channel === "drawing") {
+          this.color = color; this.shapeDefaults = { ...this.shapeDefaults, color };
+          if (shape && (object instanceof Rect || object instanceof Ellipse)) applyShapeProperties(object, { ...shape, color });
+          else if (object instanceof Path) object.set("stroke", color);
+        } else {
+          this.textDefaults = { ...this.textDefaults, [channel]: color };
+          if (text && object instanceof Textbox) applyTextProperties(object, { ...text, [channel]: color });
+        }
+        this.canvas.requestRenderAll(); this.emit();
+      },
+      finish: apply => {
+        if (!valid()) return;
+        this.colorEdit = undefined;
+        if (!apply) {
+          this.color = defaults.color; this.shapeDefaults = defaults.shape; this.textDefaults = defaults.text;
+          if (shape && (object instanceof Rect || object instanceof Ellipse)) applyShapeProperties(object, shape);
+          if (text && object instanceof Textbox) applyTextProperties(object, text);
+          if (object instanceof Path && stroke !== undefined) object.set("stroke", stroke);
+        }
+        // Cancel/no-op edits must not add metadata to legacy text objects.
+        if (text && object instanceof Textbox && shadowColorMetadata === undefined && textProperties(object).shadowColor === text.shadowColor) delete object.editorTextShadowColor;
+        this.configure(); if (apply && object) this.commit(); else this.emit();
+      },
+    };
+    this.colorEdit = edit; this.configure(); this.emit(); return edit;
+  }
+  setFieldColor(channel: ColorChannel, color: string) {
+    const edit = this.beginColorEdit(channel); edit?.preview(color); edit?.finish(true);
+  }
+  async startColorPick(apply: (color: string) => void, cancel?: () => void) {
+    if ((this.locked && !this.colorEdit) || this.busy || this.colorPick || this.gestureActive || this.selection.draft || this.shapeDraft) { cancel?.(); return; }
+    this.finishText(); this.busy = true; this.preparingColorPick = cancel ?? (() => {}); this.configure(); this.emit();
+    const generation = this.generation, request = ++this.pickRequest;
     try {
       const blob = await renderDocument(this.snapshot(), this.assets, "final", "png");
       const bitmap = await createImageBitmap(blob);
-      if (this.disposed || generation !== this.generation) { bitmap.close(); return; }
+      if (this.disposed || generation !== this.generation || request !== this.pickRequest) { bitmap.close(); return; }
       const canvas = document.createElement("canvas"); canvas.width = bitmap.width; canvas.height = bitmap.height;
       canvas.getContext("2d")!.drawImage(bitmap, 0, 0); bitmap.close();
-      this.colorPick = { canvas, apply }; this.notice = "点击图片取色，按 Esc 取消";
-    } catch (error) { this.report(error); }
-    finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
+      this.preparingColorPick = undefined; this.colorPick = { canvas, apply, cancel }; this.notice = "点击图片取色，按 Esc 取消";
+    } catch (error) { if (!this.disposed && request === this.pickRequest) { this.report(error); cancel?.(); } }
+    finally { if (!this.disposed && request === this.pickRequest) { this.preparingColorPick = undefined; this.busy = false; this.configure(); this.emit(); } }
   }
-  cancelColorPick() {
+  cancelColorPick(apply = false) {
+    if (this.preparingColorPick) {
+      const cancel = this.preparingColorPick; this.preparingColorPick = undefined; this.pickRequest++; this.busy = false;
+      cancel(); this.configure(); this.emit(); return;
+    }
     if (!this.colorPick) return;
+    const cancel = this.colorPick.cancel;
     this.colorPick.canvas.width = this.colorPick.canvas.height = 0; this.colorPick = undefined;
+    this.colorLens?.remove(); this.colorLens = undefined;
     this.notice = "已返回编辑"; this.configure(); this.emit();
+    if (!apply) cancel?.();
+  }
+  private captureColorDown = (event: MouseEvent) => {
+    if (!this.colorPick && !this.colorEdit && !this.busy) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!this.colorPick || event.button !== 0) return;
+    const point = this.canvas.getScenePoint(event);
+    if (point.x < 0 || point.y < 0 || point.x >= this.size.width || point.y >= this.size.height) return;
+    const data = this.colorPick.canvas.getContext("2d")!.getImageData(Math.floor(point.x), Math.floor(point.y), 1, 1).data;
+    const color = "#" + [...data.slice(0, 3)].map(value => value.toString(16).padStart(2, "0")).join("");
+    const apply = this.colorPick.apply; this.cancelColorPick(true); apply(color);
+  };
+  private moveColorLens(event: MouseEvent) {
+    if (!this.colorPick) return;
+    const point = this.canvas.getScenePoint(event), x = Math.floor(point.x), y = Math.floor(point.y);
+    if (x < 0 || y < 0 || x >= this.size.width || y >= this.size.height) { if (this.colorLens) this.colorLens.hidden = true; return; }
+    if (!this.colorLens) {
+      this.colorLens = document.createElement("div"); this.colorLens.className = "color-lens";
+      const canvas = document.createElement("canvas"); canvas.width = canvas.height = 99;
+      this.colorLens.append(canvas, document.createElement("span")); document.body.append(this.colorLens);
+    }
+    const lens = this.colorLens; lens.hidden = false;
+    lens.style.left = `${Math.max(8, Math.min(window.innerWidth - 124, event.clientX + (event.clientX > window.innerWidth - 150 ? -132 : 24)))}px`;
+    lens.style.top = `${Math.max(8, Math.min(window.innerHeight - 146, event.clientY + 24))}px`;
+    const ctx = lens.querySelector("canvas")!.getContext("2d")!; ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#edf0f4"; ctx.fillRect(0, 0, 99, 99); ctx.drawImage(this.colorPick.canvas, x - 5, y - 5, 11, 11, 0, 0, 99, 99);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(45, 45, 9, 9); ctx.strokeStyle = "#111"; ctx.lineWidth = 1; ctx.strokeRect(45, 45, 9, 9);
+    const data = this.colorPick.canvas.getContext("2d")!.getImageData(x, y, 1, 1).data;
+    lens.querySelector("span")!.textContent = "#" + [...data.slice(0, 3)].map(value => value.toString(16).padStart(2, "0")).join("").toUpperCase();
   }
   async uploadReplacement(file: File) {
-    if (!this.ready || this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed || this.colorPick || this.drawingInProgress) return;
+    if (!this.ready || this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit || this.drawingInProgress) return;
     if ((this.dirty || this.job || this.pending || this.selection.draft || this.shapeDraft) && !await this.confirmAction("upload")) return;
     this.busy = true; this.configure(); this.notice = "正在校验并载入图片…"; this.emit();
     const token = this.generation;
@@ -530,7 +651,7 @@ export class EditorController {
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
   }
   async requestClose() {
-    if (this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed) return;
+    if (this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord || this.closed) return;
     if ((this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("close")) return;
     this.cancelTask(); this.discardResult(); this.cancelColorPick(); this.cancelDraft();
     this.generation++; this.closed = true; this.configure(); this.emit();
@@ -570,6 +691,10 @@ export class EditorController {
 
   private configure() {
     const editable = !this.locked && !this.space;
+    this.canvas.getActiveObjects().forEach(object => {
+      if (object instanceof Rect || object instanceof Ellipse) object.set({ borderColor: "#287dcc", borderOpacityWhenMoving: 1,
+        cornerColor: "#ffffff", cornerStrokeColor: "#287dcc", transparentCorners: false });
+    });
     const selection = editable && (this.tool === "select" || this.tool === "text");
     this.canvas.selection = selection; this.canvas.skipTargetFind = !selection;
     this.canvas.isDrawingMode = editable && this.tool === "draw";
@@ -595,12 +720,13 @@ export class EditorController {
     return { x: Math.max(0, Math.min(this.size.width, point.x)), y: Math.max(0, Math.min(this.size.height, point.y)) };
   }
   private pointerDown(event: TPointerEventInfo) {
+    this.finishPropertyEdit();
     if (this.colorPick && (event.e as MouseEvent).button === 0) {
       const point = this.canvas.getScenePoint(event.e);
       if (point.x < 0 || point.y < 0 || point.x >= this.size.width || point.y >= this.size.height) return;
       const data = this.colorPick.canvas.getContext("2d")!.getImageData(Math.floor(point.x), Math.floor(point.y), 1, 1).data;
       const color = "#" + [...data.slice(0, 3)].map(value => value.toString(16).padStart(2, "0")).join("");
-      const apply = this.colorPick.apply; this.cancelColorPick(); apply(color); return;
+      const apply = this.colorPick.apply; this.cancelColorPick(true); apply(color); return;
     }
     if (this.locked || this.maskHidden) return;
     const mouse = event.e as MouseEvent;
@@ -617,7 +743,7 @@ export class EditorController {
       const object = this.tool === "rect" ? new Rect({ ...properties, width: 1, height: 1 })
         : new Ellipse({ ...properties, rx: 1, ry: 1 });
       applyShapeProperties(object, this.shapeDefaults);
-      this.shapeDraft = { object, tool: this.tool, start: point }; this.canvas.add(object); this.emit(); return;
+      this.shapeDraft = { object, tool: this.tool, start: point, screenStart: { x: mouse.clientX, y: mouse.clientY } }; this.canvas.add(object); this.emit(); return;
     }
     if (this.tool !== "erase") return;
     this.noticePresentation = "quiet";
@@ -626,6 +752,7 @@ export class EditorController {
   }
   private pointerMove(event: TPointerEventInfo, final = false) {
     const mouse = event.e as MouseEvent;
+    if (this.colorPick) { this.moveColorLens(mouse); return; }
     if (this.panning) {
       this.canvas.relativePan(new Point(mouse.clientX - this.panning.x, mouse.clientY - this.panning.y));
       this.panning = { x: mouse.clientX, y: mouse.clientY }; this.fitted = false; this.emit(); return;
@@ -643,7 +770,7 @@ export class EditorController {
       }
       const left = Math.min(start.x, point.x), top = Math.min(start.y, point.y);
       const width = Math.abs(start.x - point.x), height = Math.abs(start.y - point.y);
-      if (object instanceof Rect) object.set({ left, top, width, height });
+      if (object instanceof Rect) { object.set({ left, top, width, height }); syncRectRadius(object); }
       else if (object instanceof Ellipse) object.set({ left, top, rx: width / 2, ry: height / 2 });
       object.setCoords(); this.canvas.requestRenderAll();
     }
@@ -658,12 +785,18 @@ export class EditorController {
     this.gestureActive = false; this.pointerId = undefined;
     this.panning = undefined; this.selection.endMove();
     if (this.locked) { this.emit(); return; }
+    if ((this.tool === "select" || this.tool === "text") && this.canvas.getActiveObjects().length) this.propertiesRequest++;
     if (this.shapeDraft) {
-      const { object, tool } = this.shapeDraft; this.shapeDraft = undefined;
-      if (object.width < 3 || object.height < 3) { this.canvas.remove(object); this.emit(); return; }
+      const { object, tool, screenStart } = this.shapeDraft; this.shapeDraft = undefined;
+      // A deliberate screen-space drag may form a narrow but valid shape at any zoom.
+      if (Math.hypot(mouse.clientX - screenStart.x, mouse.clientY - screenStart.y) < 4 ||
+        !Number.isFinite(object.width * object.height) || object.width <= 0 || object.height <= 0) {
+        this.canvas.remove(object); this.emit(); return;
+      }
       object.set({ excludeFromExport: false, selectable: true, evented: true, editorId: uid("shape"), editorRole: "shape",
         editorPurpose: "content", editorName: this.nextName(tool === "rect" ? "矩形" : "椭圆") });
-      this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.commit(); return;
+      if (object instanceof Rect) syncRectRadius(object, true);
+      this.canvas.discardActiveObject(); this.configure(); this.commit(); return;
     }
     if (this.selection.draft && this.selection.mode !== "lasso") {
       const valid = this.selection.valid(this.canvas.getZoom(), this.size), stroke = this.selection.take()!;
@@ -700,7 +833,7 @@ export class EditorController {
     }
     const active = this.canvas.getActiveObject();
     const properties = active instanceof Textbox ? textProperties(active) : { ...this.textDefaults };
-    this.finishText(); this.cancelDraft(); this.tool = "text";
+    this.finishPropertyEdit(); this.finishText(); this.cancelDraft(); this.tool = "text"; this.workspace = "text";
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try {
       await ensureFont(properties.fontFamily, properties.fontWeight);
@@ -731,11 +864,19 @@ export class EditorController {
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
   }
 
+  private syncSelectionWorkspace() {
+    const selected = this.canvas.getActiveObjects();
+    if (selected.length !== 1) return;
+    this.workspace = selected[0] instanceof Textbox ? "text" : "draw";
+    if (this.workspace === "draw") this.lastDrawingTool = selected[0] instanceof Rect ? "rect" : selected[0] instanceof Ellipse ? "circle" : "draw";
+  }
   private selectionChanged() {
-    if (this.tool === "select" || this.tool === "text") {
+    if (!this.busy && (this.tool === "select" || this.tool === "text" || this.tool === "pan")) {
       const selected = this.canvas.getActiveObjects();
+      if (selected.length && !this.changingSelection) this.propertiesRequest++;
       if (selected.length === 1) {
-        this.tool = selected[0] instanceof Textbox ? "text" : "select";
+        if (this.tool !== "pan") this.tool = selected[0] instanceof Textbox ? "text" : "select";
+        this.syncSelectionWorkspace();
         this.configure();
       }
     }
@@ -746,10 +887,11 @@ export class EditorController {
     if (this.locked) return;
     const object = this.canvas.getObjects().find(item => item.editorId === id);
     if (!object || object.editorPurpose === "base" || object.editorLocked || !object.visible) return;
-    this.finishText(); this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.emit();
+    this.finishPropertyEdit(); this.finishText(); this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.selectionChanged();
   }
   updateLayer(id: string, patch: { visible?: boolean; locked?: boolean }) {
     if (this.locked) return;
+    this.finishPropertyEdit();
     const object = this.canvas.getObjects().find(item => item.editorId === id);
     if (!object || object.editorPurpose === "base") return;
     const selected = this.canvas.getActiveObjects();
@@ -758,12 +900,14 @@ export class EditorController {
     // Release the selection before changing membership so grouped coordinates survive.
     const removeFromSelection = affected && (patch.visible === false || patch.locked === true);
     const remaining = selected.filter(item => item !== object);
+    this.changingSelection = true;
     if (removeFromSelection) this.canvas.discardActiveObject();
     if (patch.visible !== undefined) object.set("visible", patch.visible);
     if (patch.locked !== undefined) object.set({ editorLocked: patch.locked, selectable: !patch.locked, evented: !patch.locked });
     if (removeFromSelection && remaining.length) {
       this.canvas.setActiveObject(remaining.length === 1 ? remaining[0] : new ActiveSelection(remaining, { canvas: this.canvas }));
     }
+    this.changingSelection = false;
     this.canvas.requestRenderAll(); this.commit();
   }
   moveLayer(id: string, direction: "up" | "down") {
@@ -801,7 +945,7 @@ export class EditorController {
   async updateText(values: TextProperties) {
     if (this.locked) return;
     const text = this.canvas.getActiveObject();
-    if (!(text instanceof Textbox)) { if (this.tool === "text") { this.textDefaults = { ...values }; this.emit(); } return; }
+    if (!(text instanceof Textbox)) { if (this.workspace === "text" && !this.canvas.getActiveObjects().length) { this.textDefaults = { ...values }; this.emit(); } return; }
     if (text.editorLocked) return;
     this.finishText(); this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try { await ensureFont(values.fontFamily, values.fontWeight); if (!this.disposed && token === this.generation) { applyTextProperties(text, values); this.textDefaults = { ...values }; this.canvas.requestRenderAll(); } }
@@ -821,6 +965,7 @@ export class EditorController {
   setAdjustments(values: ImageAdjustments, commit = false) {
     if (this.locked) return;
     const image = this.canvas.getObjects().find(object => object.editorPurpose === "base"); if (!(image instanceof FabricImage)) return;
+    if (!commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
     this.adjustments = { ...values };
     const items = [];
     if (values.brightness) items.push(new filters.Brightness({ brightness: values.brightness / 100 }));
@@ -923,9 +1068,32 @@ export class EditorController {
       ctx.save(); ctx.setTransform(...v); ctx.fillStyle = "white"; ctx.fillRect(0, 0, this.original!.size.width, this.original!.size.height);
       ctx.drawImage(this.originalElement, 0, 0); ctx.restore(); return;
     }
-    if (this.tool === "draw" && this.cursor && !this.locked) {
-      ctx.beginPath(); ctx.arc(this.cursor.x, this.cursor.y, this.drawSize * this.canvas.getZoom() / 2, 0, Math.PI * 2);
-      ctx.strokeStyle = this.color; ctx.lineWidth = 1.5; strokeOutline(ctx); return;
+    if (this.shapeDraft && !this.locked) {
+      // Draft-only aid: never serialized, sampled by the eyedropper, or exported.
+      // Once selected, Fabric's existing control frame takes over.
+      const object = this.shapeDraft.object, bounds = object.getBoundingRect(), zoom = this.canvas.getZoom();
+      const x = bounds.left * zoom + v[4], y = bounds.top * zoom + v[5];
+      const width = bounds.width * zoom, height = bounds.height * zoom;
+      ctx.save(); ctx.beginPath();
+      if (object instanceof Ellipse) ctx.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+      else ctx.roundRect(x, y, width, height, Math.min(object.rx * zoom, width / 2, height / 2));
+      ctx.strokeStyle = "#263c52"; ctx.lineWidth = 1; strokeOutline(ctx); ctx.restore(); return;
+    }
+    if (this.tool === "draw" && this.cursor && !this.locked && !this.space) {
+      const radius = this.drawSize * this.canvas.getZoom() / 2;
+      ctx.beginPath(); ctx.arc(this.cursor.x, this.cursor.y, radius, 0, Math.PI * 2);
+      // Dark outer edge plus white halo keeps even a white brush visible on white.
+      ctx.strokeStyle = "#263c52"; ctx.lineWidth = 5.5; ctx.stroke();
+      ctx.strokeStyle = this.color; ctx.lineWidth = 1.5; strokeOutline(ctx);
+      if (radius < 4) {
+        ctx.beginPath();
+        ctx.moveTo(this.cursor.x - 6, this.cursor.y); ctx.lineTo(this.cursor.x - 2, this.cursor.y);
+        ctx.moveTo(this.cursor.x + 2, this.cursor.y); ctx.lineTo(this.cursor.x + 6, this.cursor.y);
+        ctx.moveTo(this.cursor.x, this.cursor.y - 6); ctx.lineTo(this.cursor.x, this.cursor.y - 2);
+        ctx.moveTo(this.cursor.x, this.cursor.y + 2); ctx.lineTo(this.cursor.x, this.cursor.y + 6);
+        ctx.strokeStyle = "#263c52"; ctx.lineWidth = 1; strokeOutline(ctx);
+      }
+      return;
     }
     if (this.tool !== "erase") return;
     // Display-only isolation: never overwrite a layer's saved visibility during AI selection.
@@ -1009,7 +1177,7 @@ export class EditorController {
   private keyDown = (event: KeyboardEvent) => {
     if (this.confirmation) return;
     if (this.submitting || this.savedRecord || this.closed) { if (["Escape", "Enter", "Delete", "Backspace"].includes(event.key)) event.preventDefault(); return; }
-    if (this.colorPick && event.key === "Escape") { event.preventDefault(); this.cancelColorPick(); return; }
+    if ((this.colorPick || this.preparingColorPick) && event.key === "Escape") { event.preventDefault(); this.cancelColorPick(); return; }
     if (event.isComposing || event.defaultPrevented) return;
     const command = event.ctrlKey || event.metaKey;
     if (this.isInput(event.target)) return;
@@ -1035,7 +1203,10 @@ export class EditorController {
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      if (this.selection.draft || this.shapeDraft || this.drawingInProgress) { this.cancelDraft(); this.configure(); this.notice = "已取消本次绘制，已有选区保留"; this.emit(); }
+      if (this.selection.draft || this.shapeDraft || this.drawingInProgress) {
+        const erasing = this.tool === "erase";
+        this.cancelDraft(); this.configure(); this.notice = erasing ? "已取消本次绘制，已有选区保留" : "已取消本次绘制，已有内容保留"; this.emit();
+      }
       else void this.requestClose();
     }
     if (event.key === "Enter" && this.tool === "erase" && this.selection.mode === "lasso") { event.preventDefault(); this.finishLasso(); }
@@ -1058,9 +1229,10 @@ export class EditorController {
     if (this.pointerId !== undefined && this.pointerId !== event.pointerId) return;
     this.setMaskHidden(false);
     if (!this.gestureActive && !this.panning && !this.shapeDraft && !this.selection.draft) return;
-    this.panning = undefined; this.cancelDraft(); this.notice = "操作被中断，未完成的选区已取消"; this.configure(); this.emit();
+    this.panning = undefined; this.cancelDraft(); this.notice = this.tool === "erase" ? "操作被中断，未完成的选区已取消" : "操作被中断，未完成的绘制已取消"; this.configure(); this.emit();
   };
   private windowBlur = () => {
+    this.finishPropertyEdit();
     this.gestureActive = false; this.pointerId = undefined;
     this.space = false; this.panning = undefined; this.maskHidden = false;
     if (this.selection.draft || this.shapeDraft) { this.cancelDraft(); this.notice = "窗口失去焦点，未完成的操作已取消"; }
@@ -1070,6 +1242,8 @@ export class EditorController {
 
   dispose() {
     this.confirmationResolve?.(false); this.confirmationResolve = undefined; this.confirmation = undefined;
+    this.colorLens?.remove(); this.colorLens = undefined; this.colorEdit = undefined;
+    this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
     this.colorPick = undefined; this.disposed = true; this.generation++; this.job?.controller.abort(); this.observer.disconnect();
     window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp); window.removeEventListener("blur", this.windowBlur);
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);

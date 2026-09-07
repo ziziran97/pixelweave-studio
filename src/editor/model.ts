@@ -1,6 +1,6 @@
 import type { DocumentSnapshot, EditorMetadata, ObjectData } from "../types";
 
-export const SERIALIZED_PROPS: Array<keyof EditorMetadata> = ["editorId", "editorName", "editorRole", "editorPurpose", "editorLocked", "editorAssetId", "editorFilled", "editorColor", "editorLineWidth", "editorLineStyle", "editorRadius", "editorTextBackground", "editorTextBackgroundColor", "editorTextPadding", "editorTextRadius"];
+export const SERIALIZED_PROPS: Array<keyof EditorMetadata> = ["editorId", "editorName", "editorRole", "editorPurpose", "editorLocked", "editorAssetId", "editorFilled", "editorColor", "editorLineWidth", "editorLineStyle", "editorRadius", "editorTextBackground", "editorTextBackgroundColor", "editorTextPadding", "editorTextRadius", "editorTextShadowColor"];
 export const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 export const deepCopy = <T,>(value: T): T => structuredClone(value);
 export function assetIds(snapshot: DocumentSnapshot) {

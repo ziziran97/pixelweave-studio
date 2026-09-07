@@ -42,7 +42,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
       {view.layers.map(layer => {
         const base = layer.purpose === "base", problem = view.problemObjectId === layer.id;
         const Icon = layer.role === "image" ? Image : layer.role === "text" ? Type : layer.kind === "rect" ? RectangleHorizontal : layer.kind === "ellipse" ? Circle : Brush;
-        const status = [problem && "文案需修改", base && "底图 · 固定", !layer.visible && "已隐藏", layer.locked && !base && "已锁定"].filter(Boolean).join(" · ");
+        const status = [problem && "文案需修改", base && "底图 · 固定", !layer.visible && "已隐藏", layer.locked && !base && "已锁定", layer.transparent && "完全透明"].filter(Boolean).join(" · ");
         const reason = base ? "底图固定，不可选择" : !layer.visible && layer.locked ? "显示并解锁后可编辑" : !layer.visible ? "显示后可编辑" : layer.locked ? "解锁后可编辑" : undefined;
         return <div key={layer.id} tabIndex={-1} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
           <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => engine?.selectLayer(layer.id)} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>

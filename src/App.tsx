@@ -17,6 +17,7 @@ import { ActionButton } from "./components/ActionButton";
 import { OriginalPreviewButton } from "./components/OriginalPreviewButton";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { ShortcutHelp } from "./components/ShortcutHelp";
+import { PropertySlider } from "./components/PropertySlider";
 
 type EditorIconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 type EditorIcon = ComponentType<EditorIconProps>;
@@ -30,18 +31,18 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: EditorIcon }> = [
 const EMPTY: EditorView = {
   ready: false, busy: false, task: false, notice: "正在载入图片…", tool: "erase", eraseMode: "brush", maskOperation: "add",
   noticeId: 0, noticePresentation: "transient",
+  workspace: "erase", drawingTool: "draw", propertiesRequest: 0,
   brushSize: 50, drawSize: 6, color: "#2574d8", zoom: 1, size: { width: 1280, height: 800 },
   layers: [], selectionCount: 0, masks: 0, lassoPoints: 0,
   hasMask: false, maskHidden: false,
   unfinishedSelection: false, canUndo: false, canRedo: false, dirty: false,
   adjustments: DEFAULT_ADJUSTMENTS, compareOriginal: false, shape: DEFAULT_SHAPE,
-  picking: false, submitting: false, submissionStage: "", needsConfirmation: false, saved: false, closed: false, canSubmit: false, canUpload: false,
+  picking: false, colorEditing: false, submitting: false, submissionStage: "", needsConfirmation: false, saved: false, closed: false, canSubmit: false, canUpload: false,
 };
 
-function Range({ label, value, min, max, change, commit }: { label: string; value: number; min: number; max: number; change: (value: number) => void; commit?: (value: number) => void }) {
+function Range({ label, value, min, max, change, commit }: { label: string; value: number; min: number; max: number; change: (value: number) => void; commit: () => void }) {
   return <label className="slider-row"><span className="slider-title"><span>{label}</span><strong>{value}</strong></span>
-    <input type="range" aria-label={label} min={min} max={max} value={value} onChange={event => change(Number(event.target.value))}
-      onPointerUp={event => commit?.(Number(event.currentTarget.value))} onKeyUp={event => commit?.(Number(event.currentTarget.value))} onBlur={event => commit?.(Number(event.currentTarget.value))} />
+    <PropertySlider label={label} min={min} max={max} value={value} change={change} commit={commit} />
   </label>;
 }
 
@@ -54,7 +55,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
   const [helpOpen, setHelpOpen] = useState(false);
   const [canvasInteracting, setCanvasInteracting] = useState(false);
   const canvasPointer = useRef<number | undefined>(undefined);
-  const settingsContext = useRef("");
+  const settingsRequest = useRef(0);
   const [layerLocation, setLayerLocation] = useState<{ id: string; request: number }>();
   useEffect(() => {
     let cancelled = false;
@@ -68,14 +69,11 @@ export default function App({ integration }: { integration?: EditorIntegration }
     });
     return () => { cancelled = true; controller?.dispose(); };
   }, [integration]);
-  const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || view.picking || view.submitting || view.saved || view.closed;
-  const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.picking;
+  const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
+  const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking;
   const execute = () => { void engine?.executeErase(); };
   const adjust = (key: keyof ImageAdjustments, value: number | boolean, commit = false) => engine?.setAdjustments({ ...view.adjustments, [key]: value }, commit);
-  const drawingActive = view.tool === "draw" || view.tool === "rect" || view.tool === "circle";
-  const showDrawingPanel = !!view.drawing || !!view.shapeKind || drawingActive;
-  const panelKind = view.tool === "erase" ? "erase" : view.tool === "adjust" ? "adjust" : view.text ? "text" : showDrawingPanel ? "draw" : "";
-  const panelContext = panelKind ? `${panelKind}:${view.tool}:${view.selectedId ?? "new"}` : "";
+  const panelKind = view.workspace;
   const changeSettings = (open: boolean) => {
     if (settingsOpen === open) return;
     engine?.zoomTo(view.zoom);
@@ -84,7 +82,6 @@ export default function App({ integration }: { integration?: EditorIntegration }
   const uploadImage = async (file: File) => {
     if (!engine || !await engine.uploadReplacement(file)) return;
     // Upload starts editing a new image without reopening a manually collapsed panel.
-    settingsContext.current = "erase:erase:new";
     engine.setTool("erase");
   };
   useEffect(() => {
@@ -100,15 +97,14 @@ export default function App({ integration }: { integration?: EditorIntegration }
   useLayoutEffect(() => {
     // Wait for canvas gestures to finish before changing the available canvas space.
     if (canvasInteracting || locked || view.unfinishedSelection) return;
-    if (settingsContext.current === panelContext) return;
-    const deselectedText = panelContext === "text:text:new" && settingsContext.current.startsWith("text:");
-    settingsContext.current = panelContext;
-    if (panelContext && !settingsOpen && !deselectedText) {
+    if (settingsRequest.current === view.propertiesRequest) return;
+    settingsRequest.current = view.propertiesRequest;
+    if (view.selectionCount && !settingsOpen) {
       engine?.zoomTo(view.zoom);
       setSettingsOpen(true);
     }
-  }, [panelContext, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
-  const settingsTitle = panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : panelKind === "draw" ? "绘制" : "工具属性";
+  }, [view.propertiesRequest, view.selectionCount, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
+  const settingsTitle = panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
   const locateProblem = view.problemObjectId && view.layers.some(layer => layer.id === view.problemObjectId) ? () => {
     engine?.zoomTo(view.zoom);
     setLayersOpen(true);
@@ -129,34 +125,37 @@ export default function App({ integration }: { integration?: EditorIntegration }
         <ActionButton below className="text-button upload-button" hint="载入编辑，暂不替换任务图片" disabled={!view.canUpload} onClick={() => fileRef.current?.click()}><ImagePlus size={17} />上传本地图片</ActionButton>
         <span className="action-divider" aria-hidden="true" />
         <ActionButton below className="primary-button" hint="将当前图片保存到任务" disabled={!view.canSubmit} onClick={() => void engine?.submitReplacement()}><Save size={17} />替换图片</ActionButton>
-        <ActionButton below className="icon-button" aria-label="关闭编辑" hint="关闭编辑" disabled={view.busy || view.submitting || view.saved} onClick={() => void engine?.requestClose()}><X size={19} /></ActionButton>
+        <ActionButton below className="icon-button" aria-label="关闭编辑" hint="关闭编辑" disabled={view.busy || view.colorEditing || view.picking || view.submitting || view.saved} onClick={() => void engine?.requestClose()}><X size={19} /></ActionButton>
       </div>
     </header>
     <main className={`workspace${layersOpen ? "" : " layers-collapsed"}${settingsOpen ? "" : " settings-collapsed"}`}>
       <nav className="tool-rail" aria-label="编辑工具">
-        {TOOLS.map(({ id, label, icon: Icon }) => <button key={id} className={`tool-button ${(id === "draw" ? drawingActive : view.tool === id) ? "active" : ""}`} disabled={locked} aria-label={label} aria-controls="tool-settings" aria-pressed={id === "draw" ? drawingActive : view.tool === id} onClick={() => { changeSettings(true); id === "draw" ? engine?.activateDrawing() : engine?.setTool(id); }}><Icon size={21} /><span>{label}</span></button>)}
+        {TOOLS.map(({ id, label, icon: Icon }) => <button key={id} className={`tool-button ${view.workspace === id ? "active" : ""}`} disabled={locked} aria-label={label} aria-controls="tool-settings" aria-pressed={view.workspace === id} onClick={() => { changeSettings(true); id === "draw" ? engine?.activateDrawing() : engine?.setTool(id); }}><Icon size={21} /><span>{label}</span></button>)}
         <div className="tool-help"><ActionButton floating hintPlacement="right" hintDelay={300} hintSuspended={helpOpen} dismissHintOnClick className="tool-button" aria-label="操作帮助" hint="操作说明与快捷键" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => setHelpOpen(true)}><CircleHelp size={21} /><span>帮助</span></ActionButton></div>
       </nav>
       <aside id="tool-settings" className="settings-panel" hidden={!settingsOpen} aria-label="工具属性">
         <div className="panel-heading"><span>{settingsTitle}</span><ActionButton floating className="icon-button" aria-label="收起工具属性" hint="收起工具属性，再次点击工具可展开" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => { changeSettings(false); viewportRef.current?.focus({ preventScroll: true }); }}><PanelLeftClose /></ActionButton></div>
-        <div className="panel-content">
-          {view.tool === "erase" ? <EraserPanel view={view} engine={engine} locked={locked} execute={execute} /> : view.tool === "adjust" ? <fieldset disabled={locked}>
-            {([{ key: "brightness", label: "亮度", min: -100, max: 100 }, { key: "contrast", label: "对比度", min: -100, max: 100 }, { key: "saturation", label: "饱和度", min: -100, max: 100 }, { key: "blur", label: "模糊", min: 0, max: 30 }] as const).map(item => <Range key={item.key} label={item.label} value={view.adjustments[item.key]} min={item.min} max={item.max} change={value => adjust(item.key, value)} commit={value => adjust(item.key, value, true)} />)}
+        <div className={`panel-content${panelKind === "draw" && view.selectionCount <= 1 ? " drawing-properties" : ""}`}>
+          {view.tool === "pan" && <p className="field-help canvas-mode-hint">拖动画布平移；点击底部选择可继续编辑对象。</p>}
+          {view.selectionCount > 1 ? <div className="multi-selection-properties"><p className="text-style-scope">已选 {view.selectionCount} 个图层</p><p className="field-help">可一起移动、调整尺寸或删除。选中单个图层可调整属性。</p></div>
+            : panelKind === "erase" ? <>
+              {view.tool !== "erase" && <p className="field-help">点击左侧消除笔，继续选择消除区域。</p>}
+              <EraserPanel view={view} engine={engine} locked={locked || view.tool !== "erase"} execute={execute} />
+            </> : panelKind === "adjust" ? <fieldset disabled={locked}>
+            {([{ key: "brightness", label: "亮度", min: -100, max: 100 }, { key: "contrast", label: "对比度", min: -100, max: 100 }, { key: "saturation", label: "饱和度", min: -100, max: 100 }, { key: "blur", label: "模糊", min: 0, max: 30 }] as const).map(item => <Range key={item.key} label={item.label} value={view.adjustments[item.key]} min={item.min} max={item.max} change={value => adjust(item.key, value)} commit={() => engine?.finishPropertyEdit()} />)}
             <div className="toggle-grid"><button className={view.adjustments.grayscale ? "selected" : ""} onClick={() => adjust("grayscale", !view.adjustments.grayscale, true)}>黑白</button><button className={view.adjustments.sepia ? "selected" : ""} onClick={() => adjust("sepia", !view.adjustments.sepia, true)}>复古</button></div>
             <button className="secondary-button full" onClick={() => engine?.setAdjustments(DEFAULT_ADJUSTMENTS, true)}>重置调色</button>
           </fieldset> : <>
             {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} />
-              : showDrawingPanel && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} />
-              : <p className="settings-empty">{view.selectionCount > 1 ? "选中单个图层可调整属性。" : "选择工具或图层以调整属性。"}</p>}
+              : panelKind === "draw" && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} /> : null}
           </>}
         </div>
       </aside>
       <section className="canvas-stage">
-        {view.tool !== "erase" && <div className="notice-bar" role="status"><span>{view.notice}</span>{locateProblem && <button disabled={locked} onClick={locateProblem}>查看问题图层</button>}{view.task && <button onClick={() => engine?.cancelTask()}>取消任务</button>}</div>}
         <div ref={viewportRef} className="canvas-viewport" aria-label="图片编辑画布" tabIndex={-1} onPointerDownCapture={event => { if (event.button === 0 && event.target instanceof HTMLCanvasElement && canvasPointer.current === undefined) { canvasPointer.current = event.pointerId; setCanvasInteracting(true); } }}>
           <canvas ref={canvasRef} /><canvas ref={overlayRef} className="mask-overlay" aria-hidden="true" />
           {view.picking && <div className="picking-hint" role="status">点击图片取色<button onClick={() => engine?.cancelColorPick()}>取消</button></div>}
-          {view.tool === "erase" && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} locateProblem={locked ? undefined : locateProblem} />}
+          {!view.picking && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} locateProblem={locked ? undefined : locateProblem} />}
           {view.compareOriginal && <span className="original-badge">正在查看原图 · 松开返回编辑</span>}
           <div className="canvas-controls">
           <div className="zoom-control" role="group" aria-label="画布操作">
@@ -174,7 +173,7 @@ export default function App({ integration }: { integration?: EditorIntegration }
               <OriginalPreviewButton engine={engine} active={view.compareOriginal} disabled={compareDisabled} />
             </div>
             <div className="canvas-view-controls" role="group" aria-label="面板显示">
-              <ActionButton hint={layersOpen ? "收起图层" : "展开图层"} aria-label={layersOpen ? "收起图层" : "展开图层"} aria-expanded={layersOpen} aria-controls="layers-panel" disabled={!view.ready || view.busy || view.unfinishedSelection || view.picking || !!view.pending || view.submitting || view.saved}
+              <ActionButton hint={layersOpen ? "收起图层" : "展开图层"} aria-label={layersOpen ? "收起图层" : "展开图层"} aria-expanded={layersOpen} aria-controls="layers-panel" disabled={!view.ready || view.busy || view.unfinishedSelection || view.colorEditing || view.picking || !!view.pending || view.submitting || view.saved}
                 onClick={() => { engine?.zoomTo(view.zoom); setLayersOpen(open => !open); }}><Layers3 /></ActionButton>
             </div>
           </div>

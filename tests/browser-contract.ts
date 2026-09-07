@@ -1,9 +1,14 @@
+import { checkColorEditing } from "./color-editing";
 import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
 import { checkSelectionInteractions } from "./selection-interactions";
 import { checkRequestLifecycle } from "./request-lifecycle";
-import { checkEditingTools, checkTextWorkspace } from "./editing-tools";
+import { checkEditingTools, checkTextWorkspace, checkWorkspacePersistence } from "./editing-tools";
 import { checkReplacementFlow } from "./replacement-flow";
+import { checkDrawingRefinements } from "./drawing-refinements";
+import { checkDrawingTransforms } from "./drawing-transforms";
+import { checkShapeStyles } from "./shape-styles";
+import { checkDrawingTargeting } from "./drawing-targeting";
 import { renderDocument } from "../src/editor/render";
 import type { DocumentSnapshot, MaskStroke } from "../src/types";
 
@@ -85,7 +90,13 @@ try {
   await checkSelectionInteractions(check);
   await checkRequestLifecycle(check);
   await checkEditingTools(check);
+  await checkDrawingRefinements(check);
+  await checkDrawingTransforms(check);
+  await checkShapeStyles(check);
+  await checkDrawingTargeting(check);
+  await checkColorEditing(check);
   await checkTextWorkspace(check);
+  await checkWorkspacePersistence(check);
   await checkReplacementFlow(check);
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { assets.dispose(); document.getElementById("results")!.textContent = reports.join("\n"); }

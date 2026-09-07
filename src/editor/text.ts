@@ -9,7 +9,7 @@ export function textProperties(text: Textbox): TextProperties {
     background: text.editorTextBackground ?? false, backgroundColor: text.editorTextBackgroundColor ?? "#ffffff",
     backgroundPadding: text.editorTextPadding ?? 10, backgroundRadius: text.editorTextRadius ?? 0, textAlign: text.textAlign, lineHeight: text.lineHeight, charSpacing: text.charSpacing,
     stroke: String(text.stroke ?? "#ffffff"), strokeWidth: text.stroke ? text.strokeWidth : 0,
-    shadowColor: shadow?.color ?? "#000000", shadowBlur: shadow?.blur ?? 0,
+    shadowColor: shadow?.color ?? text.editorTextShadowColor ?? "#000000", shadowBlur: shadow?.blur ?? 0,
     shadowOffsetX: shadow?.offsetX ?? 0, shadowOffsetY: shadow?.offsetY ?? 0,
   };
 }
@@ -17,6 +17,7 @@ export function applyTextProperties(text: Textbox, values: TextProperties) {
   text.set({ fontFamily: values.fontFamily, fontSize: values.fontSize, fill: values.fill, fontWeight: values.fontWeight, fontStyle: values.fontStyle as "normal" | "italic",
     editorTextBackground: values.background, editorTextBackgroundColor: values.backgroundColor,
     editorTextPadding: values.backgroundPadding, editorTextRadius: values.backgroundRadius,
+    editorTextShadowColor: values.shadowColor,
     textAlign: values.textAlign, lineHeight: values.lineHeight, charSpacing: values.charSpacing,
     stroke: values.strokeWidth > 0 ? values.stroke : null, strokeWidth: values.strokeWidth,
     paintFirst: "stroke", splitByGrapheme: true,

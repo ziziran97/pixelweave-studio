@@ -58,6 +58,6 @@ export function EraserPanel({ view, engine, locked, execute }: {
       <button className="primary-button erase-submit" title={submitHint || "消除所选区域，处理后可对比并选择是否使用"} aria-describedby={showSubmitHint ? "erase-submit-hint" : undefined} disabled={!view.hasMask || view.unfinishedSelection} onClick={execute}><Eraser size={16} />{view.task ? "正在消除…" : "开始消除"}</button>
     </div>
     {showSubmitHint && <p id="erase-submit-hint" className="erase-submit-hint">{submitHint}</p>}
-    {!view.compareOriginal && view.layers.some(layer => layer.purpose === "content") && <p className="erase-base-hint">当前仅显示底图，新增文字和绘制内容已保留。</p>}
+    {view.tool === "erase" && !view.compareOriginal && view.layers.some(layer => layer.purpose === "content") && <p className="erase-base-hint">当前仅显示底图，新增文字和绘制内容已保留。</p>}
   </fieldset>;
 }

@@ -205,7 +205,7 @@ export async function checkSelectionInteractions(check: (condition: boolean, mes
     // Fixture image only: validates adoption/history, not AI generation quality.
     await editor.openImage(await toBlob(source), "采用与历史检查", false);
     editor.setTool("rect"); drag(250, 200, 300, 250);
-    const shapeId = state().selectedId!;
+    const shapeId = editor.canvas.getObjects().at(-1)!.editorId!;
     editor.setEraseMode("brush"); editor.setBrushSize(64);
     drag(60, 60, 120, 60);
     const objects = editor.canvas.getObjects();

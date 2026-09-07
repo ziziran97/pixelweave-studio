@@ -4,7 +4,74 @@ import { toBlob, validateJpeg } from "../src/editor/assets";
 import { SERIALIZED_PROPS } from "../src/editor/model";
 import type { EditorView } from "../src/types";
 import type { EditorIntegration, ReplacementInput } from "../src/integration";
-import { Ellipse, Path, Rect, Textbox } from "fabric";
+import { ActiveSelection, Ellipse, Path, Rect, Textbox } from "fabric";
+
+export async function checkWorkspacePersistence(check: (condition: boolean, message: string) => void) {
+  const { editor, state, click, drag, dispose } = createEditor();
+  try {
+    await editor.initialize();
+    editor.setTool("rect"); drag(80, 80, 180, 140);
+    const rectId = editor.canvas.getObjects().at(-1)!.editorId!;
+    check(state().tool === "rect" && !state().selectedId && state().workspace === "draw", "矩形画完保持连续绘制，不选中新对象");
+    editor.selectLayer(rectId);
+    click(500, 400);
+    const historyBefore = state().canRedo, revisionBefore = (editor as unknown as { revision: number }).revision;
+    const colorBefore = editor.canvas.getObjects().find(object => object.editorId === rectId)!.fill;
+    editor.updateShape({ color: "#ff0000", filled: false });
+    check(!state().selectedId && state().workspace === "draw" && state().shapeKind === "rect" && state().tool === "select", "取消选择仍提供新矩形样式且不自动开始绘制");
+    check(editor.canvas.getObjects().find(object => object.editorId === rectId)!.fill === colorBefore && (editor as unknown as { revision: number }).revision === revisionBefore && state().canRedo === historyBefore, "新图形样式不改已有对象，也不写入历史");
+    const count = state().layers.length; click(450, 350);
+    check(state().layers.length === count, "取消选择后点击画布不会误画新矩形");
+    editor.activateDrawing(); drag(240, 80, 320, 140);
+    const secondId = editor.canvas.getObjects().at(-1)!.editorId!; editor.selectLayer(secondId);
+    check(!state().shape.filled && state().shape.color === "#ff0000", "再次点击绘制类型，新矩形采用预设样式");
+    const view = [...editor.canvas.viewportTransform];
+    editor.setTool("pan"); editor.setTool("select");
+    check(state().selectedId === secondId && state().workspace === "draw" && editor.canvas.viewportTransform.every((n, i) => n === view[i]), "选择与平移切换保留工作区、对象和视野");
+    editor.updateShape({ color: "#00ff00" });
+    const request = state().propertiesRequest;
+    await editor.undo();
+    check(state().selectedId === secondId && state().shape.color === "#ff0000" && state().propertiesRequest === request, "撤销属性保留对象选择，不发起属性栏自动展开请求");
+    await editor.undo(true);
+    check(state().selectedId === secondId && state().shape.color === "#00ff00", "重做保持选择并回显恢复后的实际属性");
+    const objects = [rectId, secondId].map(id => editor.canvas.getObjects().find(object => object.editorId === id)!);
+    editor.canvas.setActiveObject(new ActiveSelection(objects, { canvas: editor.canvas }));
+    const centers = objects.map(object => object.getCenterPoint());
+    editor.canvas.fire("object:modified", { target: editor.canvas.getActiveObject()! });
+    editor.updateLayer(rectId, { visible: false });
+    check(state().selectedId === secondId && state().workspace === "draw", "多选中隐藏一层只移除该选择，剩余对象继续展示属性");
+    await editor.undo();
+    check(state().selectedId === secondId && objects.every((object, i) => editor.canvas.getObjects().find(item => item.editorId === object.editorId)!.getCenterPoint().distanceFrom(centers[i]) < .01), "撤销显隐保留仍选中的对象且不移动多选对象");
+    editor.updateLayer(secondId, { locked: true });
+    check(!state().selectedId && state().workspace === "draw" && state().shapeKind === "rect", "锁定当前图形后回到新绘制样式");
+    editor.setTool("draw"); editor.setDrawSize(8); drag(80, 200, 180, 200);
+    const brushId = state().layers.find(layer => layer.kind === "brush")!.id;
+    editor.selectLayer(brushId);
+    for (const width of [15, 40, 70, 90]) editor.updateDrawing({ width }, false);
+    editor.finishPropertyEdit();
+    check(state().drawing?.width === 90, "连续粗细调整实时显示最终值");
+    await editor.undo();
+    check(state().selectedId === brushId && state().drawing?.width === 8, "连续粗细调整一次撤销回到拖动前，保留笔画选择");
+    await editor.undo(true);
+    check(state().selectedId === brushId && state().drawing?.width === 90, "一次重做恢复完整粗细调整");
+    editor.updateDrawing({ width: 30 }, false); window.dispatchEvent(new Event("blur"));
+    await editor.undo();
+    check(state().drawing?.width === 90, "粗细预览时失焦也结束本次调整，撤销可恢复");
+    editor.deleteSelected(); await editor.undo();
+    check(state().workspace === "draw" && state().drawingTool === "draw" && !state().selectedId, "删除笔画及撤销删除均保留画笔工作区，不选择失效对象");
+    editor.setTool("text"); await editor.addText({ x: 100, y: 250 });
+    const textId = state().selectedId!;
+    editor.setTool("pan"); editor.setTool("select"); click(500, 400);
+    check(state().workspace === "text" && !!state().text && !state().selectedId, "文字经过选择和平移后，取消选择仍保留新文字样式");
+    editor.selectLayer(textId); await editor.updateText({ ...state().text!, fontSize: 60 }); await editor.undo();
+    check(state().selectedId === textId && state().workspace === "text", "撤销文字属性保留文字选择及工作区");
+    const mixed = [textId, brushId].map(id => editor.canvas.getObjects().find(object => object.editorId === id)!);
+    editor.canvas.setActiveObject(new ActiveSelection(mixed, { canvas: editor.canvas })); editor.setTool("pan");
+    const mixedRequest = state().propertiesRequest;
+    editor.updateLayer(textId, { visible: false });
+    check(state().selectedId === brushId && state().workspace === "draw" && state().tool === "pan" && state().propertiesRequest === mixedRequest, "平移时混合多选减少到单选，属性跟随剩余对象但不改变模式或展开面板");
+  } finally { dispose(); }
+}
 
 export async function pixelAt(blob: Blob, x: number, y: number) {
   const bitmap = await createImageBitmap(blob), canvas = document.createElement("canvas");
@@ -108,6 +175,7 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     check(state().hasMask && !state().canSubmit, "只画消除选区不算成图修改");
     editor.resetEraseSelection();
     editor.setTool("rect"); drag(30, 30, 90, 60, true);
+    editor.selectLayer(editor.canvas.getObjects().at(-1)!.editorId!);
     let rectangle = editor.canvas.getActiveObject() as Rect;
     check(rectangle instanceof Rect && rectangle.width === rectangle.height && rectangle.fill === "#2574d8" && rectangle.strokeWidth === 0,
       "矩形默认实心，Shift 绘制正方形");
@@ -122,6 +190,7 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     await editor.undo(); editor.selectLayer(rectangleId);
     check(state().shape.filled, "撤销可恢复矩形填充样式");
     editor.setTool("circle"); drag(200, 20, 245, 80, true);
+    editor.selectLayer(editor.canvas.getObjects().at(-1)!.editorId!);
     const ellipse = editor.canvas.getActiveObject() as Ellipse;
     check(ellipse instanceof Ellipse && ellipse.rx === ellipse.ry && ellipse.editorColor === "#ff0000", "椭圆支持 Shift 正圆并沿用最近形状设置");
     const beforeSwitch = snapshot();

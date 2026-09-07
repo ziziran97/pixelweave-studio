@@ -58,7 +58,7 @@ try {
   check(!settingsHidden() && viewport().clientWidth < openingWidth && zoom() === openingZoom, "点击工具展开属性，保持原有缩放");
   check(centerBefore.every((value, i) => Math.abs(value - centerAfter[i]) <= 2), "属性展开保持画布中心对应的图片内容");
   button("选择").click(); await paint();
-  check(!settingsHidden() && settings().textContent!.includes("选择工具或图层"), "取消工具后保留面板位置，仅显示简短选择提示");
+  check(!settingsHidden() && settings().textContent!.includes("新画笔样式") && button("绘制").getAttribute("aria-pressed") === "true" && button("选择").getAttribute("aria-pressed") === "true", "进入选择模式后保留绘制工作区与新画笔样式，两处高亮分别表达工作区和鼠标操作");
   button("收起工具属性").click(); await paint();
   check(settingsHidden() && viewport().clientWidth === openingWidth && zoom() === openingZoom && document.activeElement === viewport(), "手动收起释放空间并将焦点移回画布");
   button("绘制").click(); await paint();

@@ -1,0 +1,210 @@
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import App from "../src/App";
+import { frame, picture, settle } from "./editing-tools";
+import type { EditorIntegration } from "../src/integration";
+import "../src/styles.css";
+
+const reports: string[] = [];
+const check = (value: boolean, message: string) => { if (!value) throw new Error(message); reports.push(`PASS ${message}`); };
+const host = document.getElementById("test-root")!, root = createRoot(host);
+const paint = async () => { await frame(); await frame(); };
+const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const settings = () => host.querySelector<HTMLElement>(".settings-panel")!;
+const hidden = () => getComputedStyle(settings()).display === "none";
+const content = () => [...host.querySelectorAll<HTMLElement>('.layer-card[data-purpose="content"]')];
+const canvas = () => host.querySelector<HTMLCanvasElement>(".upper-canvas")!;
+const viewport = () => host.querySelector<HTMLElement>(".canvas-viewport")!;
+const zoom = () => host.querySelector("output[aria-label='当前缩放比例']")!.textContent;
+const mouse = (type: string, x: number, y: number, shiftKey = false) => {
+  const bounds = canvas().getBoundingClientRect();
+  (type === "mousedown" ? canvas() : document).dispatchEvent(new MouseEvent(type, { button: 0, buttons: type === "mouseup" ? 0 : 1,
+    clientX: bounds.left + bounds.width / 2 + x, clientY: bounds.top + bounds.height / 2 + y,
+    bubbles: true, cancelable: true, shiftKey }));
+};
+const click = async (x: number, y: number, shiftKey = false) => { mouse("mousedown", x, y, shiftKey); mouse("mouseup", x, y, shiftKey); await paint(); };
+const drag = async (x: number, y: number, endX: number, endY: number) => {
+  mouse("mousedown", x, y); mouse("mousemove", endX, endY); mouse("mouseup", endX, endY); await paint();
+};
+const select = async (row: HTMLElement) => { row.querySelector<HTMLButtonElement>(".layer-select")!.click(); await paint(); };
+const range = async (label: string, values: number[]) => {
+  const input = host.querySelector<HTMLInputElement>(`input[type=range][aria-label="${label}"]`)!;
+  for (const value of values) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, String(value));
+    input.dispatchEvent(new Event("input", { bubbles: true })); await paint();
+  }
+  window.dispatchEvent(new PointerEvent("pointerup", { button: 0, buttons: 0 })); await paint();
+};
+const number = async (label: string, value: string, finish: "Escape" | "Enter" | "blur") => {
+  const input = host.querySelector<HTMLInputElement>(`input[type=number][aria-label="${label}"]`)!;
+  input.focus();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true })); await paint();
+  if (finish !== "blur") input.dispatchEvent(new KeyboardEvent("keydown", { key: finish, code: finish, bubbles: true, cancelable: true }));
+  // Also cover blur in the same turn as Escape: a stale render must not commit the cancelled draft.
+  input.blur(); await paint();
+  return input.value;
+};
+const lineStyle = async (label: string) => {
+  button("线条类型").click(); await paint();
+  document.querySelector<HTMLButtonElement>(`.shape-line-menu [aria-label="${label}"]`)!.click(); await paint();
+};
+
+try {
+  const integration: EditorIntegration = {
+    initialImage: await picture(), context: { taskId: "workspace-test", imageId: "image" },
+    validateTexts: async () => ({ passed: true }), replace: async () => ({ status: "failed", message: "测试检测未通过，草稿已保留" }),
+    confirmResult: async () => ({ status: "pending" }), onClose: () => {},
+  };
+  root.render(createElement(App, { integration }));
+  await settle(() => !!button("绘制") && !button("绘制").disabled);
+  button("绘制").click(); await paint(); button("矩形").click(); await paint();
+  check(settings().textContent!.includes("新矩形样式") && settings().textContent!.includes("拖动绘制矩形") && !host.querySelector(".notice-bar"), "新绘制有明确样式范围和拖动提示，画布不再常驻重复提示条");
+  await range("不透明度滑块", [40, 65]);
+  check(button("撤销").disabled && host.querySelector<HTMLButtonElement>('.top-right .primary-button')!.disabled && settings().textContent!.includes("不能完全遮盖"), "设置新图形不透明度不产生历史，显示透出下方内容的提示");
+  await range("不透明度滑块", [100]);
+  await range("矩形圆角滑块", [10, 24]);
+  check(button("撤销").disabled && host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角"]')!.value === "24", "新矩形圆角滑块同步数字且不产生历史");
+  await range("矩形圆角滑块", [0]);
+  await drag(-180, -100, -80, -40);
+  const rect = content()[0], rectId = rect.dataset.layerId, rectName = rect.querySelector(".layer-name")?.textContent ?? "矩形 1";
+  check(settings().textContent!.includes("新矩形样式") && !host.querySelector(".layer-card.selected"), "画完矩形保持新建样式，不自动选择");
+  await select(rect);
+  check(settings().textContent!.includes("当前矩形属性") && button("绘制").getAttribute("aria-pressed") === "true" && button("选择").getAttribute("aria-pressed") === "true", "通过图层选中矩形后显示当前属性，绘制与选择正确高亮");
+  check(button("实心").getAttribute("aria-pressed") === "true" && !!button("填充颜色 #ffffff") && !button("线条类型"), "实心图形只显示填充颜色，不展示无效边框设置");
+  check(host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角"]')!.max === "30" && host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角滑块"]')!.max === "30", "选中矩形时圆角数字框与滑块上限同步为短边一半");
+  check(await number("矩形圆角", "500", "Enter") === "30", "圆角数字超限输入自动限制在当前矩形有效范围");
+  await number("矩形圆角", "0", "Enter");
+  await range("矩形圆角滑块", [6, 12, 24]);
+  check(host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角"]')!.value === "24", "圆角拖动连续预览并同步数字输入");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角"]')!.value === "0" && host.querySelector('.layer-card.selected')?.getAttribute('data-layer-id') === rectId, "圆角连续拖动只记一步历史，撤销恢复直角并保留选择");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角滑块"]')!.value === "24", "重做圆角恢复数值和滑块位置");
+  await number("矩形圆角", "0", "Enter");
+  button("边框").click(); await paint(); button("线条类型").click(); await paint();
+  const menu = document.querySelector<HTMLElement>('.shape-line-menu')!;
+  check(menu.querySelectorAll('[role=option]').length === 5 && document.activeElement === menu, "线型下拉展示五个带示意图的选项，打开后接收键盘操作");
+  menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await paint();
+  check(button("线条类型").textContent!.includes("实线"), "键盘浏览线型只高亮候选，不提前改写对象");
+  menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await paint();
+  check(!document.querySelector('.shape-line-menu') && document.activeElement === button("线条类型") && !host.querySelector('.confirmation-dialog[open]'), "Esc 只关闭线型菜单并恢复入口焦点，不关闭编辑");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(button("实心").getAttribute("aria-pressed") === "true", "浏览并取消线型菜单不产生历史");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  await lineStyle("虚线");
+  await range("边框粗细滑块", [5, 12, 18]);
+  check(host.querySelector<HTMLInputElement>('input[aria-label="边框粗细"]')!.value === "18", "边框滑块实时同步数字输入");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="边框粗细"]')!.value === "2" && host.querySelector(".layer-card.selected")?.getAttribute("data-layer-id") === rectId, "一次撤销恢复全部边框粗细调整并保留选择");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="边框粗细"]')!.value === "18", "一次重做恢复边框粗细最终值");
+  check(await number("边框粗细", "75", "Escape") === "18" && !host.querySelector(".confirmation-dialog[open]"), "边框数值按 Esc 后失焦恢复原值，不弹出关闭确认");
+  check(await number("矩形圆角", "30", "Escape") === "0", "矩形圆角按 Esc 取消本次输入");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="边框粗细"]')!.value === "2", "取消边框和圆角输入不挤占撤销记录");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(await number("边框粗细", "22", "Enter") === "22" && await number("边框粗细", "18", "blur") === "18", "取消后重新输入仍支持回车和失焦应用");
+  button("实心").click(); await paint(); button("边框").click(); await paint();
+  check(button("线条类型").textContent!.includes("虚线") && host.querySelector<HTMLInputElement>('input[aria-label="边框粗细"]')!.value === "18" && !!button("边框颜色 #ffffff"), "实心和边框来回切换保留线型及粗细，颜色名称同步切换");
+  await lineStyle("圆点线");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(button("线条类型").textContent!.includes("虚线"), "选择新线型可一步撤销为原来的虚线");
+  await range("不透明度滑块", [75, 50, 25]);
+  check(host.querySelector<HTMLInputElement>('input[aria-label="不透明度（%）"]')!.value === "25", "图形不透明度滑块实时同步百分比");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="不透明度（%）"]')!.value === "100" && host.querySelector('.layer-card.selected')?.getAttribute('data-layer-id') === rectId, "不透明度连续调整一步撤销恢复原值和选择");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(await number("不透明度（%）", "80", "Escape") === "25", "不透明度数字输入也支持 Esc 取消");
+  button("实心").click(); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="不透明度（%）"]')!.value === "25", "切换实心或边框保留不透明度");
+  await range("不透明度滑块", [0]);
+  check(settings().textContent!.includes("图形完全透明") && !!host.querySelector('.layer-card.selected'), "完全透明图形仍保留图层选择，并提示可以恢复");
+  check(host.querySelector('.layer-card.selected')!.textContent!.includes("完全透明") && settings().textContent!.includes("可调整不透明度恢复"), "已有透明图形显示恢复提示，图层列表标记完全透明");
+  await click(220, 150);
+  check(settings().textContent!.includes("新绘制的图形将不可见") && host.querySelector<HTMLInputElement>('input[aria-label="不透明度（%）"]')!.value === "0", "新建透明样式明确提醒后续图形不可见，并保留样式记忆");
+  await select(rect);
+  await number("不透明度（%）", "100", "Enter");
+  check(!host.querySelector('.layer-card.selected')!.textContent!.includes("完全透明"), "恢复不透明度后清除图层的透明提示");
+  button("实心").click(); await paint();
+  const width = viewport().clientWidth, beforeZoom = zoom();
+  await click(220, 150);
+  check(!host.querySelector(".layer-card.selected") && settings().textContent!.includes("新矩形样式") && settings().textContent!.includes("再次点击矩形开始绘制") && !hidden(), "点击空白保留绘制面板，明确提示再次点击类型才开始画");
+  check(viewport().clientWidth === width && zoom() === beforeZoom, "取消选择不改变布局或画布缩放");
+  button("填充颜色 #e34432").click(); await paint();
+  check(rect.querySelector(".layer-color")!.getAttribute("style")!.includes("37, 116, 216"), "新绘制颜色不改写已有矩形颜色");
+  await drag(150, 100, 200, 140);
+  check(content().length === 1, "取消选择后拖动只执行选择，不意外生成图形");
+  await select(rect); button("收起工具属性").click(); await paint(); await click(220, 150);
+  check(hidden(), "手动收起后取消选择不会重新展开");
+  await select(rect);
+  check(!hidden() && settings().textContent!.includes("当前矩形属性"), "重新选中对象主动展开其属性");
+  button("收起工具属性").click(); await paint(); button(`锁定${rectName}`).click(); await paint();
+  check(hidden() && !host.querySelector(".layer-card.selected") && settings().textContent!.includes("新矩形样式"), "锁定当前对象回到新样式，保持手动收起状态");
+  button(`解锁${rectName}`).click(); await paint(); await select(rect);
+  button(`隐藏${rectName}`).click(); await paint();
+  check(!hidden() && settings().textContent!.includes("新矩形样式"), "隐藏当前图形也不会丢失绘制面板");
+  button(`显示${rectName}`).click(); await paint(); await select(rect);
+  const left = rect.getBoundingClientRect().left;
+  button("平移").click(); await paint();
+  check(rect.classList.contains("selected") && settings().textContent!.includes("当前矩形属性") && button("绘制").getAttribute("aria-pressed") === "true" && button("平移").getAttribute("aria-pressed") === "true", "平移模式保留选中矩形、属性和工作区高亮");
+  button("选择").click(); await paint();
+  check(rect.classList.contains("selected") && zoom() === beforeZoom && rect.getBoundingClientRect().left === left, "切回选择后不丢失对象或改变布局");
+  button("椭圆").click(); await paint(); await drag(40, -100, 140, -40);
+  check(!host.querySelector('input[aria-label="矩形圆角滑块"]'), "椭圆不展示矩形圆角控件");
+  const ellipse = content()[0];
+  check(settings().textContent!.includes("新椭圆样式") && !host.querySelector(".layer-card.selected"), "椭圆画完保持连续绘制的新样式");
+  await select(ellipse);
+  await click(220, 150);
+  check(settings().textContent!.includes("新椭圆样式"), "椭圆取消选择保留对应的新样式");
+  await select(rect); await click(90, -70, true);
+  check(host.querySelectorAll(".layer-card.selected").length === 2 && settings().textContent!.includes("已选 2 个图层") && !settings().querySelector(".color-field"), "多选显示数量和操作说明，不显示单个对象属性或新建样式");
+  await select(ellipse); button("删除图层").click(); await paint();
+  check(settings().textContent!.includes("新椭圆样式") && !!host.querySelector(".eraser-notice") && content().length === 1, "删除后保留工作区，反馈浮在画布上方");
+  const stageHeight = viewport().clientHeight;
+  button("关闭提示").click(); await paint();
+  check(!host.querySelector(".eraser-notice") && viewport().clientHeight === stageHeight, "关闭提示不改变画布尺寸");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(content().length === 2 && settings().textContent!.includes("新椭圆样式"), "撤销删除后仍保留工作区");
+  button("画笔").click(); await paint(); await drag(-180, 60, -70, 60);
+  const stroke = content()[0]; await select(stroke);
+  const oldWidth = host.querySelector<HTMLInputElement>('input[aria-label="画笔粗细"]')!.value;
+  check(await number("画笔粗细", "250", "Escape") === oldWidth && !host.querySelector(".confirmation-dialog[open]"), "选中笔画时 Esc 取消粗细输入，保留编辑页面");
+  await range("画笔粗细滑块", [20, 50, 80]);
+  check(host.querySelector<HTMLInputElement>('input[aria-label="画笔粗细"]')!.value === "80", "滑块连续预览同步数值输入");
+  button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="画笔粗细"]')!.value === oldWidth && host.querySelector(".layer-card.selected")?.getAttribute("data-layer-id") === stroke.dataset.layerId, "拖动粗细滑块一次撤销恢复原值，并保留选中笔画");
+  button("重做").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="画笔粗细"]')!.value === "80", "一次重做恢复完整滑块调整");
+  button("收起工具属性").click(); await paint(); button("撤销").click(); await settle(() => !button("绘制").disabled); await paint();
+  check(hidden(), "撤销保留对象选择时不擅自展开已收起属性栏");
+  button("绘制").click(); await paint();
+  host.style.width = "1040px"; await paint();
+  check(settings().scrollWidth <= settings().clientWidth && host.querySelector(".top-right")!.getBoundingClientRect().right <= host.getBoundingClientRect().right, "较窄编辑区域中属性和右上角操作不溢出");
+  host.style.width = "1280px"; await paint();
+  button("矩形").click(); await paint(); button("边框").click(); await paint();
+  host.style.height = "600px"; await paint();
+  const scroller = host.querySelector<HTMLElement>('.panel-content')!;
+  scroller.scrollTop = scroller.scrollHeight; await paint();
+  const modes = host.querySelector<HTMLElement>('.drawing-mode-grid')!.getBoundingClientRect();
+  const scrollBounds = scroller.getBoundingClientRect();
+  check(scroller.scrollTop > 0 && modes.top >= scrollBounds.top - 1 && modes.bottom < scrollBounds.bottom,
+    "短窗口滚动到圆角设置时，三种绘制入口仍固定可见");
+  button("画笔").click(); await paint();
+  check(!!host.querySelector('input[aria-label="画笔粗细"]'), "面板滚动后仍可直接切换画笔");
+  host.style.height = "720px"; await paint();
+  button("调色").click(); await paint(); await range("亮度", [10, 20, 30]);
+  button("撤销").click(); await settle(() => !button("调色").disabled); await paint();
+  check(host.querySelector<HTMLInputElement>('input[aria-label="亮度"]')!.value === "0" && button("调色").getAttribute("aria-pressed") === "true", "调色沿用一次滑动一步撤销，保留调色工作区");
+  button("平移").click(); await paint();
+  check(!!host.querySelector('input[aria-label="亮度"]') && button("调色").getAttribute("aria-pressed") === "true", "调色切平移仍保留调色面板");
+  await new Promise(resolve => setTimeout(resolve, 5200));
+  check(!host.querySelector(".eraser-notice"), "普通操作反馈会自动收起");
+  host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click(); await settle(() => !!host.querySelector(".confirmation-dialog[open]"));
+  host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")!.click();
+  await settle(() => !host.querySelector(".submission-dialog") && !!host.querySelector(".eraser-notice"));
+  await new Promise(resolve => setTimeout(resolve, 5200));
+  check(host.querySelector(".eraser-notice")!.textContent!.includes("测试检测未通过"), "检测拦截反馈持续显示，草稿和工作区保留");
+  check(content().some(row => row.dataset.layerId === rectId), "完整流程保留原图形及稳定图层标识");
+} catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
+finally { document.getElementById("results")!.textContent = reports.join("\n"); }

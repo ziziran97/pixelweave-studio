@@ -5,16 +5,25 @@ import { ColorField } from "./ColorField";
 import { Plus } from "lucide-react";
 import { FONT_OPTIONS } from "../editor/fonts";
 
-export function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
+export function NumberField({ label, value, min, max, step = 1, unit, cancelOnEscape = false, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; cancelOnEscape?: boolean; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState(String(value));
+  const cancelled = useRef(false);
   useEffect(() => setDraft(String(value)), [value]);
   const commit = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
     const parsed = Number(draft);
     const next = Number.isFinite(parsed) && draft.trim() ? Math.min(max, Math.max(min, parsed)) : value;
     setDraft(String(next)); if (next !== value) onChange(next);
   };
-  return <label className="property-field"><span>{label}</span><input aria-label={label} type="number" value={draft} min={min} max={max} step={step}
-    onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur(); }} /></label>;
+  const input = <input aria-label={label} type="number" value={draft} min={min} max={max} step={step}
+    title={cancelOnEscape ? "回车或失焦生效，Esc 取消本次输入" : undefined}
+    onChange={event => { cancelled.current = false; setDraft(event.target.value); }} onBlur={commit} onKeyDown={event => {
+      if (event.nativeEvent.isComposing) return;
+      if (cancelOnEscape && event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation(); cancelled.current = true; setDraft(String(value));
+      } else if (event.key === "Enter") event.currentTarget.blur();
+    }} />;
+  return <label className="property-field"><span>{label}</span>{unit ? <span className="property-number-value">{input}<span>{unit}</span></span> : input}</label>;
 }
 
 export function TextPanel({ text, engine, disabled, selected }: { text: TextProperties; engine: EditorController; disabled: boolean; selected: boolean }) {
@@ -35,10 +44,10 @@ export function TextPanel({ text, engine, disabled, selected }: { text: TextProp
       <button aria-label="加粗" aria-pressed={text.fontWeight === "bold" || text.fontWeight === "700"} className={text.fontWeight === "bold" || text.fontWeight === "700" ? "selected" : ""} onClick={() => update({ fontWeight: text.fontWeight === "bold" || text.fontWeight === "700" ? "normal" : "bold" })}><b>B</b> 加粗</button>
       <button aria-label="斜体" aria-pressed={text.fontStyle === "italic"} className={text.fontStyle === "italic" ? "selected" : ""} onClick={() => update({ fontStyle: text.fontStyle === "italic" ? "normal" : "italic" })}><i>I</i> 斜体</button>
     </div>
-    <ColorField label="文字颜色" value={text.fill} onChange={fill => update({ fill })} engine={engine} />
+    <ColorField label="文字颜色" value={text.fill} channel="fill" engine={engine} />
     <label className="check-field"><input type="checkbox" checked={text.background} onChange={event => update({ background: event.target.checked })} />背景填充</label>
     {text.background && <div className="background-settings">
-      <ColorField label="背景颜色" value={text.backgroundColor} onChange={backgroundColor => update({ backgroundColor })} engine={engine} />
+      <ColorField label="背景颜色" value={text.backgroundColor} channel="backgroundColor" engine={engine} />
       <div className="property-grid">
         <NumberField label="背景留白" value={text.backgroundPadding} min={0} max={200} onChange={backgroundPadding => update({ backgroundPadding })} />
         <NumberField label="背景圆角" value={text.backgroundRadius} min={0} max={200} onChange={backgroundRadius => update({ backgroundRadius })} />
@@ -52,14 +61,14 @@ export function TextPanel({ text, engine, disabled, selected }: { text: TextProp
       <label className="check-field"><input type="checkbox" checked={text.strokeWidth > 0} onChange={event => update({ strokeWidth: event.target.checked ? 2 : 0 })} />文字描边</label>
       {text.strokeWidth > 0 && <>
         <NumberField label="描边粗细" value={text.strokeWidth} min={1} max={30} onChange={strokeWidth => update({ strokeWidth })} />
-        <ColorField label="描边颜色" value={text.stroke} onChange={stroke => update({ stroke })} engine={engine} />
+        <ColorField label="描边颜色" value={text.stroke} channel="stroke" engine={engine} />
       </>}
       <div className="property-grid">
         <NumberField label="阴影模糊" value={text.shadowBlur} min={0} max={100} onChange={shadowBlur => update({ shadowBlur })} />
         <NumberField label="阴影水平偏移" value={text.shadowOffsetX} min={-100} max={100} onChange={shadowOffsetX => update({ shadowOffsetX })} />
         <NumberField label="阴影垂直偏移" value={text.shadowOffsetY} min={-100} max={100} onChange={shadowOffsetY => update({ shadowOffsetY })} />
       </div>
-      <ColorField label="阴影颜色" value={text.shadowColor.startsWith("#") ? text.shadowColor : "#000000"} onChange={shadowColor => update({ shadowColor })} engine={engine} />
+      <ColorField label="阴影颜色" value={text.shadowColor.startsWith("#") ? text.shadowColor : "#000000"} channel="shadowColor" engine={engine} />
       <button className="secondary-button full" onClick={() => fileRef.current?.click()}>加载本地字体</button>
       <p className="field-help">字体仅在当前编辑中使用。字距单位为千分之一字号。</p>
     </details>
