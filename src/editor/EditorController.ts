@@ -30,6 +30,9 @@ function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
 }
 export type ColorChannel = "drawing" | "shape" | "fill" | "backgroundColor" | "stroke" | "shadowColor" | "overlay";
 export interface ColorEdit { preview(color: string): void; finish(apply: boolean): void }
+const POSITION_KEYS: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+};
 
 export class EditorController {
   readonly canvas: Canvas;
@@ -63,6 +66,7 @@ export class EditorController {
   private propertiesRequest = 0;
   private changingSelection = false;
   private propertyEdit = false;
+  private nudgeKeys = new Set<string>();
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
   private operation: "add" | "subtract" = "add";
   private hasMask = false;
@@ -116,7 +120,7 @@ export class EditorController {
       preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
     this.canvas.on("selection:created", () => this.selectionChanged());
     this.canvas.on("selection:updated", () => this.selectionChanged());
-    this.canvas.on("selection:cleared", () => this.emit());
+    this.canvas.on("selection:cleared", () => { this.finishNudge(); this.emit(); });
     this.canvas.on("object:modified", ({ target }) => {
       if (target instanceof Rect || target instanceof Ellipse) {
         const center = target.getCenterPoint(), width = target.width * Math.abs(target.scaleX), height = target.height * Math.abs(target.scaleY);
@@ -191,6 +195,8 @@ export class EditorController {
     window.addEventListener("keydown", this.keyDown);
     window.addEventListener("keyup", this.keyUp);
     window.addEventListener("blur", this.windowBlur);
+    window.addEventListener("focusin", this.finishNudge);
+    document.addEventListener("visibilitychange", this.finishNudge);
     window.addEventListener("pointerdown", this.windowPointerDown, true);
     window.addEventListener("pointerup", this.windowPointerUp, true);
     window.addEventListener("pointercancel", this.windowPointerCancel, true);
@@ -260,6 +266,7 @@ export class EditorController {
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
+      canCenterSelection: selected.length === 1 && !!this.positionTarget(),
       text: single instanceof Textbox ? textProperties(single) : this.workspace === "text" && !selected.length ? { ...this.textDefaults } : undefined,
       textEditing: single instanceof Textbox && single.isEditing,
       textVertical: single instanceof Textbox && isVerticalText(single),
@@ -292,6 +299,7 @@ export class EditorController {
     if (this.emptyTexts.size) return;
     if (this.disposed || !this.ready || this.busy || this.job || this.pending || this.submitting || this.savedRecord || this.closed) return;
     this.propertyEdit = false;
+    this.nudgeKeys.clear();
     if (this.history.push(this.snapshot())) { this.revision++; this.problemObjectId = undefined; }
     this.collect(); this.emit();
   }
@@ -1006,6 +1014,7 @@ export class EditorController {
     if (this.workspace === "draw") this.lastDrawingTool = selected[0] instanceof Rect ? "rect" : selected[0] instanceof Ellipse ? "circle" : "draw";
   }
   private selectionChanged() {
+    this.finishNudge();
     if (!this.busy && (this.tool === "select" || this.tool === "text" || this.tool === "pan")) {
       const selected = this.canvas.getActiveObjects();
       if (selected.length && !this.changingSelection) this.propertiesRequest++;
@@ -1025,6 +1034,49 @@ export class EditorController {
     this.finishPropertyEdit(); this.finishText();
     if (!this.canvas.getObjects().includes(object)) return;
     this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.selectionChanged();
+  }
+  private positionTarget() {
+    if (this.locked || this.gestureActive || this.space || this.selection.draft || this.shapeDraft ||
+      (this.tool !== "select" && this.tool !== "text")) return;
+    const selected = this.canvas.getActiveObjects();
+    if (!selected.length || selected.some(object => object.editorPurpose !== "content" || !object.visible || object.editorLocked)) return;
+    return this.canvas.getActiveObject();
+  }
+  centerSelection(axis: "horizontal" | "vertical") {
+    if (!this.positionTarget() || this.canvas.getActiveObjects().length !== 1) return;
+    this.finishPropertyEdit(); this.finishText();
+    const object = this.positionTarget();
+    if (!object) return;
+    const center = object.getCenterPoint();
+    const next = new Point(axis === "horizontal" ? this.size.width / 2 : center.x,
+      axis === "vertical" ? this.size.height / 2 : center.y);
+    if (center.distanceFrom(next) < .0001) return;
+    object.setPositionByOrigin(next, "center", "center"); object.setCoords();
+    this.canvas.requestRenderAll(); this.commit();
+  }
+  private finishNudge = () => {
+    if (!this.nudgeKeys.size) return;
+    this.nudgeKeys.clear(); this.finishPropertyEdit();
+  };
+  private nudgeSelection(event: KeyboardEvent) {
+    const object = this.positionTarget(), direction = POSITION_KEYS[event.key];
+    const target = event.target instanceof Element ? event.target : undefined;
+    const app = this.viewport.closest(".app-shell");
+    // Only the canvas, layer selection and position controls own movement keys.
+    const inEditor = !target || target === document.body || this.viewport.contains(target) ||
+      (!!app?.contains(target) && !!target.closest(".layer-select,.layer-card,.layer-position"));
+    const control = target?.closest("input,textarea,select,[contenteditable='true'],dialog,[role='dialog'],[role='menu'],[role='listbox'],button,a[href],summary,[role='button'],[role='slider']");
+    const ownsKeys = control && !control.matches(".layer-select,.layer-position button");
+    if (!direction || !object || (object instanceof Textbox && object.isEditing) || event.ctrlKey || event.metaKey || event.altKey ||
+      !inEditor || ownsKeys || (event.repeat && !this.nudgeKeys.has(event.key))) { this.finishNudge(); return; }
+    event.preventDefault(); event.stopPropagation();
+    if (!this.nudgeKeys.size) { this.finishPropertyEdit(); this.commit(); this.propertyEdit = true; }
+    this.nudgeKeys.add(event.key);
+    const step = event.shiftKey ? 10 : 1;
+    object.set({ left: object.left + direction[0] * step, top: object.top + direction[1] * step });
+    object.setCoords();
+    this.canvas.getActiveObjects().forEach(item => item.setCoords());
+    this.canvas.requestRenderAll(); this.emit();
   }
   updateLayer(id: string, patch: { visible?: boolean; locked?: boolean }) {
     if (this.locked) return;
@@ -1351,10 +1403,12 @@ export class EditorController {
   }
   private isInput(target: EventTarget | null) { return target instanceof HTMLElement && !!target.closest("input,textarea,select,[contenteditable='true']"); }
   private keyDown = (event: KeyboardEvent) => {
+    if (!POSITION_KEYS[event.key] && event.key !== "Shift") this.finishNudge();
     if (this.confirmation) return;
     if (this.submitting || this.savedRecord || this.closed) { if (["Escape", "Enter", "Delete", "Backspace"].includes(event.key)) event.preventDefault(); return; }
     if ((this.colorPick || this.preparingColorPick) && event.key === "Escape") { event.preventDefault(); this.cancelColorPick(); return; }
     if (event.isComposing || event.defaultPrevented) return;
+    if (POSITION_KEYS[event.key]) { this.nudgeSelection(event); return; }
     const command = event.ctrlKey || event.metaKey;
     if (this.isInput(event.target)) return;
     // Focused controls own activation keys; canvas shortcuts must not consume them.
@@ -1388,11 +1442,13 @@ export class EditorController {
     if (event.key === "Enter" && this.tool === "erase" && this.selection.mode === "lasso") { event.preventDefault(); this.finishLasso(); }
   };
   private keyUp = (event: KeyboardEvent) => {
+    if (this.nudgeKeys.delete(event.key) && !this.nudgeKeys.size) this.finishPropertyEdit();
     if (event.code === "Space" && this.space) {
       this.selection.endMove(); this.space = false; this.panning = undefined; this.configure();
     }
   };
   private windowPointerDown = (event: PointerEvent) => {
+    this.finishNudge();
     if (event.button === 0 && !this.gestureActive && event.target === this.canvas.upperCanvasEl) this.pointerId = event.pointerId;
   };
   private windowPointerUp = (event: PointerEvent) => {
@@ -1422,6 +1478,7 @@ export class EditorController {
     this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
     this.colorPick = undefined; this.disposed = true; this.generation++; this.job?.controller.abort(); this.observer.disconnect();
     window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp); window.removeEventListener("blur", this.windowBlur);
+    window.removeEventListener("focusin", this.finishNudge); document.removeEventListener("visibilitychange", this.finishNudge);
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);
     window.removeEventListener("pointerdown", this.windowPointerDown, true);
     window.removeEventListener("beforeunload", this.beforeUnload);

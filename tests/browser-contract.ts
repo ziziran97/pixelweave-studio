@@ -1,4 +1,5 @@
 import { checkColorEditing } from "./color-editing";
+import { checkPositioning } from "./positioning";
 import { checkAdjustments } from "./adjustments";
 import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
@@ -103,5 +104,6 @@ try {
   await checkWorkspacePersistence(check);
   await checkRotation(check);
   await checkReplacementFlow(check);
+  await checkPositioning(check);
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { assets.dispose(); document.getElementById("results")!.textContent = reports.join("\n"); }

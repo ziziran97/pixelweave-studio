@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Image, Layers3, Lock, Unlock, Trash2, Type, RectangleHorizontal, Circle, Brush, Copy } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpToLine, ArrowDownToLine, AlignHorizontalJustifyCenter, AlignVerticalJustifyCenter, Eye, EyeOff, Image, Layers3, Lock, Unlock, Trash2, Type, RectangleHorizontal, Circle, Brush, Copy } from "lucide-react";
 import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { ActionButton } from "./ActionButton";
@@ -65,6 +65,14 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
       })}
     </div>
     <div className="layer-footer">
+      <div className="layer-position" role="group" aria-label="相对图片居中">
+        <span className="layer-position-label">相对图片居中</span>
+        <div className="layer-position-actions">
+          <ActionButton floating hint="将单个图层移到当前图片的水平中心，不改变高度位置" aria-label="相对图片水平居中" disabled={disabled || !view.canCenterSelection} onClick={() => engine?.centerSelection("horizontal")}><AlignHorizontalJustifyCenter /><span>水平居中</span></ActionButton>
+          <ActionButton floating hint="将单个图层移到当前图片的垂直中心，不改变左右位置" aria-label="相对图片垂直居中" disabled={disabled || !view.canCenterSelection} onClick={() => engine?.centerSelection("vertical")}><AlignVerticalJustifyCenter /><span>垂直居中</span></ActionButton>
+        </div>
+        <p className="layer-position-help" title="选中图层后，方向键移动 1 个图片像素；Shift＋方向键移动 10 个图片像素。多选时整体移动。">方向键微调 · Shift 加速</p>
+      </div>
       {view.selectionCount > 1 && <span className="layer-selection-count" role="status">已选 {view.selectionCount} 个图层</span>}
       <div className="layer-order" role="group" aria-label="图层操作">
         <ActionButton floating hint={movable && !canUp ? "已在最上层" : "置顶"} aria-label="置顶" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "top")}><ArrowUpToLine /></ActionButton>

@@ -225,6 +225,13 @@ summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px;
 .layer-controls button.is-locked { color: #366594; background: #e8f0f8; }
 .layer-controls svg { width: 15px; }
 .layer-footer { border-top: 1px solid var(--line); padding: 10px 8px; }
+.layer-position { margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+.layer-position-label { display: block; margin-bottom: 7px; font-size: 11px; color: #52677e; }
+.layer-position-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.layer-position-actions .action-hint { min-width: 0; }
+.layer-position-actions button { width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #e0e7ef; border-radius: 6px; background: white; color: #627c96; font-size: 11px; white-space: nowrap; }
+.layer-position-actions svg { width: 15px; height: 15px; flex-shrink: 0; }
+.layer-position-help { margin: 7px 0 0; color: #7890a4; font-size: 10px; line-height: 1.5; }
 .layer-selection-count { display: block; color: #52677e; font-size: 11px; margin-bottom: 8px; }
 .layer-order { display: flex; justify-content: flex-end; gap: 3px; }
 .layer-order button { border: 1px solid #e0e7ef; border-radius: 6px; background: white; width: 30px; height: 32px; display: grid; place-items: center; color: #627c96; }
