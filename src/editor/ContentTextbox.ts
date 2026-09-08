@@ -171,6 +171,7 @@ export class ContentTextbox extends Textbox {
     const radius = Math.min(this.editorTextRadius ?? 0, width / 2, height / 2);
     ctx.save();
     ctx.shadowColor = "transparent";
+    ctx.globalAlpha *= this.editorTextBackgroundOpacity ?? 1;
     ctx.fillStyle = this.editorTextBackgroundColor ?? "#ffffff";
     ctx.beginPath(); ctx.roundRect(-width / 2, -height / 2, width, height, radius); ctx.fill();
     ctx.restore();

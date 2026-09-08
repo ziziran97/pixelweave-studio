@@ -21,6 +21,7 @@ export function textProperties(text: Textbox): TextProperties {
     underline: text.underline, linethrough: text.linethrough,
     opacity: Math.round(text.opacity * 100),
     background: text.editorTextBackground ?? false, backgroundColor: text.editorTextBackgroundColor ?? "#ffffff",
+    backgroundOpacity: Math.round((text.editorTextBackgroundOpacity ?? 1) * 100),
     backgroundPadding: text.editorTextPadding ?? 10, backgroundRadius: text.editorTextRadius ?? 0, textAlign: text.textAlign, lineHeight: text.lineHeight, charSpacing: text.charSpacing,
     strokeEnabled: text.editorTextStrokeEnabled ?? (!!text.stroke && text.strokeWidth > 0),
     stroke: String(text.stroke ?? text.editorTextStrokeColor ?? "#ffffff"),
@@ -31,6 +32,12 @@ export function textProperties(text: Textbox): TextProperties {
     boldRestoreWeight: text.editorTextBoldRestoreWeight,
   };
 }
+export function applyTextBackgroundOpacity(text: Textbox, value = 100) {
+  const opacity = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) / 100 : 1;
+  // Keep legacy/default objects unchanged during no-op or cancelled color edits.
+  if (opacity !== 1 || text.editorTextBackgroundOpacity !== undefined) text.set("editorTextBackgroundOpacity", opacity);
+}
+
 export function applyTextProperties(text: Textbox, values: TextProperties) {
   const strokeEnabled = values.strokeEnabled ?? values.strokeWidth > 0;
   const shadowEnabled = values.shadowEnabled ?? !!(values.shadowBlur || values.shadowOffsetX || values.shadowOffsetY);
@@ -50,6 +57,7 @@ export function applyTextProperties(text: Textbox, values: TextProperties) {
     shadow: shadowEnabled
       ? new Shadow({ color: values.shadowColor, blur: values.shadowBlur, offsetX: values.shadowOffsetX, offsetY: values.shadowOffsetY }) : null,
   });
+  applyTextBackgroundOpacity(text, values.backgroundOpacity);
   text.initDimensions(); text.setCoords();
 }
 
@@ -58,7 +66,7 @@ export const DEFAULT_TEXT: TextProperties = {
   underline: false, linethrough: false,
   opacity: 100,
   textAlign: "left", lineHeight: 1.16, charSpacing: 0,
-  background: false, backgroundColor: "#ffffff", backgroundPadding: 10, backgroundRadius: 0,
+  background: false, backgroundColor: "#ffffff", backgroundOpacity: 100, backgroundPadding: 10, backgroundRadius: 0,
   stroke: "#ffffff", strokeWidth: 2, strokeEnabled: false, shadowEnabled: false,
   shadowColor: "#000000", shadowBlur: 4, shadowOffsetX: 2, shadowOffsetY: 2,
 };

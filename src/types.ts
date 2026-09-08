@@ -21,6 +21,7 @@ export interface EditorMetadata {
   editorRadius?: number;
   editorTextBackground?: boolean;
   editorTextBackgroundColor?: string;
+  editorTextBackgroundOpacity?: number;
   editorTextPadding?: number;
   editorTextRadius?: number;
   editorTextShadowColor?: string;
@@ -101,7 +102,7 @@ export type TextProperties = {
   fontFamily: string; fontSize: number; fill: string; fontWeight: string; fontStyle: string;
   underline?: boolean; linethrough?: boolean;
   opacity?: number;
-  background: boolean; backgroundColor: string; backgroundPadding: number; backgroundRadius: number;
+  background: boolean; backgroundColor: string; backgroundOpacity?: number; backgroundPadding: number; backgroundRadius: number;
   textAlign: string; lineHeight: number; charSpacing: number;
   stroke: string; strokeWidth: number; shadowColor: string; shadowBlur: number;
   shadowOffsetX: number; shadowOffsetY: number;

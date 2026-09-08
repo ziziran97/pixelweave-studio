@@ -44,6 +44,7 @@ export function TextPanel({ text, engine, disabled, selected, editing, vertical,
   const italic = supportsItalic(text.fontFamily, weight);
   const spacingPx = Math.round(text.charSpacing * text.fontSize / 1000 * 100) / 100;
   const opacity = text.opacity ?? 100;
+  const backgroundOpacity = text.backgroundOpacity ?? 100;
   const activeEffects = [opacity < 100 && (opacity === 0 ? "完全透明" : `${opacity}% 不透明`), text.strokeEnabled && "描边", text.shadowEnabled && "阴影"].filter(Boolean).join("、");
   return <fieldset disabled={disabled} className="text-properties">
     <div className="text-add-sticky"><button className="primary-button full" aria-label="添加文字" onClick={() => void engine.addText()}><Plus size={17} />添加文字</button></div>
@@ -89,6 +90,12 @@ export function TextPanel({ text, engine, disabled, selected, editing, vertical,
     <label className="check-field"><input type="checkbox" checked={text.background} onChange={event => update({ background: event.target.checked })} />背景填充</label>
     {text.background && <div className="background-settings">
       <ColorField label="背景颜色" value={text.backgroundColor} channel="backgroundColor" engine={engine} />
+      <div className="shape-number-control">
+        <NumberField showRangeHint label="背景不透明度" value={backgroundOpacity} min={0} max={100} unit="%" cancelOnEscape onChange={value => engine.updateTextBackgroundOpacity(value)} />
+        <PropertySlider label="文字背景不透明度滑块" min={0} max={100} value={backgroundOpacity}
+          change={value => engine.updateTextBackgroundOpacity(value, false)} commit={() => engine.finishPropertyEdit()} />
+      </div>
+      <p className="field-help">{backgroundOpacity === 0 ? "背景完全透明，可调高不透明度恢复。" : "仅调整背景，文字、描边和阴影不变。"}</p>
       <div className="property-grid">
         <NumberField showRangeHint label="背景留白" value={text.backgroundPadding} min={0} max={200} unit="px" cancelOnEscape onChange={backgroundPadding => update({ backgroundPadding })} />
         <NumberField showRangeHint label="背景圆角" value={text.backgroundRadius} min={0} max={200} unit="px" cancelOnEscape onChange={backgroundRadius => update({ backgroundRadius })} />

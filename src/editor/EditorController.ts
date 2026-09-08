@@ -11,7 +11,7 @@ import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumen
 import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from "./mask";
 import { makeSurface, renderDocument } from "./render";
 import { ensureFont } from "./fonts";
-import { applyTextProperties, textProperties, DEFAULT_TEXT, isVerticalText } from "./text";
+import { applyTextProperties, applyTextBackgroundOpacity, textProperties, DEFAULT_TEXT, isVerticalText } from "./text";
 import { textPlacement } from "./textPlacement";
 import { SelectionGesture } from "./SelectionGesture";
 import { ContentTextbox } from "./ContentTextbox";
@@ -1160,19 +1160,26 @@ export class EditorController {
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.commit(); } }
   }
   updateTextOpacity(value: number, commit = true) {
+    this.updateTextAlpha(value, "opacity", commit);
+  }
+  updateTextBackgroundOpacity(value: number, commit = true) {
+    this.updateTextAlpha(value, "backgroundOpacity", commit);
+  }
+  private updateTextAlpha(value: number, field: "opacity" | "backgroundOpacity", commit: boolean) {
     if (this.locked || this.gestureActive) return;
     this.finishText();
     const opacity = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 100;
     const text = this.canvas.getActiveObject();
     if (!(text instanceof Textbox)) {
       if (this.workspace === "text" && !this.canvas.getActiveObjects().length) {
-        this.textDefaults = { ...this.textDefaults, opacity }; this.emit();
+        this.textDefaults = { ...this.textDefaults, [field]: opacity }; this.emit();
       }
       return;
     }
     if (text.editorLocked) return;
     if (!commit && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
-    text.set("opacity", opacity / 100);
+    if (field === "backgroundOpacity") applyTextBackgroundOpacity(text, opacity);
+    else text.set("opacity", opacity / 100);
     this.textDefaults = textProperties(text);
     this.canvas.requestRenderAll();
     if (commit) this.commit(); else this.emit();

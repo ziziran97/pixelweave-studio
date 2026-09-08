@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "../src/App";
 import { checkTextEditing } from "./text-editing";
 import { checkTextOpacity } from "./text-opacity";
+import { checkTextBackgroundOpacity } from "./text-background-opacity";
 import { checkTextLayout } from "./text-layout";
 import { checkJapaneseText } from "./japanese-text";
 import { checkJapaneseLayout } from "./japanese-layout";
@@ -30,6 +31,7 @@ const weight = async (value: string, family = FONT_FAMILY) => {
   select.value = `${family}:${value}`; select.dispatchEvent(new Event("change", { bubbles: true })); await ready();
 };
 const alignment = () => host.querySelector<HTMLSelectElement>('select[aria-label="对齐"]')!;
+const toggle = async (label: string) => { [...host.querySelectorAll<HTMLLabelElement>(".text-properties .check-field")].find(item => item.textContent === label)!.querySelector<HTMLInputElement>("input")!.click(); await ready(); };
 const align = async (value: string) => {
   alignment().value = value; alignment().dispatchEvent(new Event("change", { bubbles: true })); await ready();
 };
@@ -39,6 +41,7 @@ try {
   await checkJapaneseLayout(check);
   await checkTextLayout(check);
   await checkTextOpacity(check);
+  await checkTextBackgroundOpacity(check);
   root.render(createElement(App, { integration: { initialImage: await picture(), context: { taskId: "ui", imageId: "image" },
     validateTexts: async () => ({ passed: true as const }), replace: async () => ({ status: "failed" as const, message: "测试" }),
     confirmResult: async () => ({ status: "pending" as const }), onClose: () => {} } }));
@@ -49,7 +52,12 @@ try {
   await number("字距", "2", "Enter"); await number("字号", "60", "Enter");
   check(field("字距").value === "2" && button("撤销").disabled, "新文字字号改变仍保持像素字距，不记历史");
   await number("字号", "98", "Escape"); check(field("字号").value === "60", "Esc 后立即失焦不应用已取消字号");
+  check(!field("背景不透明度"), "背景关闭时不堆放背景不透明度控件");
+  await toggle("背景填充"); check(field("背景不透明度").value === "100", "开启文字背景默认100%不透明");
+  await number("背景不透明度", "45", "Enter");
+  check(button("撤销").disabled, "面板设置新文字背景不透明度不记历史");
   button("添加文字").click(); await ready();
+  check(field("背景不透明度").value === "45", "新增文字采用面板背景不透明度预设");
   check(!!document.querySelector('textarea[data-fabric="textarea"]') && host.textContent!.includes("当前文字属性"), "添加进入画布输入并切换当前文字属性");
   check(!button("修改文字"), "正在输入时隐藏重复的修改文字入口");
   await weight("300"); button("加粗").click(); await ready(); button("加粗").click(); await ready();
@@ -81,7 +89,6 @@ try {
   await number("行距", "1.5", "Enter"); button("撤销").click(); await ready();
   check(field("行距").value === "1.16", "字号行距数值按一次应用记一步历史");
   host.querySelector<HTMLDetailsElement>(".text-properties details")!.open = true; await paint();
-  const toggle = async (label: string) => { [...host.querySelectorAll<HTMLLabelElement>(".text-properties .check-field")].find(item => item.textContent === label)!.querySelector<HTMLInputElement>("input")!.click(); await ready(); };
   await toggle("文字阴影");
   check(field("阴影模糊").value === "4" && field("水平偏移").value === "2" && field("垂直偏移").value === "2", "首次开启阴影使用预设，未开启时不渲染");
   await number("阴影模糊", "12", "Enter"); await toggle("文字阴影"); await toggle("文字阴影");
@@ -107,6 +114,28 @@ try {
   button("撤销").click(); await ready(); check(field("不透明度").value === "100", "面板连续调整不透明度只记一步撤销");
   host.querySelector<HTMLDetailsElement>(".text-effects")!.open = true; await paint();
   await number("不透明度", "15", "Escape"); check(field("不透明度").value === "100", "文字不透明度数字Esc取消后失焦不应用");
+  const backgroundSlider = host.querySelector<HTMLInputElement>('input[aria-label="文字背景不透明度滑块"]')!;
+  backgroundSlider.focus();
+  for (const value of [80, 60, 25]) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(backgroundSlider, String(value));
+    backgroundSlider.dispatchEvent(new Event("input", { bubbles: true })); await paint();
+  }
+  backgroundSlider.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true })); await ready();
+  check(field("背景不透明度").value === "25" && field("不透明度").value === "100", "背景滑块同步数值且不改变整体不透明度");
+  button("撤销").click(); await ready(); check(field("背景不透明度").value === "45", "背景连续调整只记一步撤销");
+  button("重做").click(); await ready(); check(field("背景不透明度").value === "25", "背景连续调整重做恢复最终值");
+  await number("背景不透明度", "10", "Escape"); check(field("背景不透明度").value === "25", "背景数字Esc取消并保留原值");
+  await number("背景不透明度", "0", "Enter");
+  check(host.textContent!.includes("背景完全透明") && !host.querySelector('.layer-card')!.textContent!.includes("完全透明"), "0%背景提示恢复，文字图层不标记完全透明");
+  await toggle("背景填充"); check(!field("背景不透明度"), "关闭背景收起对应控件");
+  await toggle("背景填充"); check(field("背景不透明度").value === "0", "重新开启背景保留零不透明度");
+  await number("背景不透明度", "45", "Enter");
+  const resumedBackgroundSlider = field("文字背景不透明度滑块"); resumedBackgroundSlider.focus();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(resumedBackgroundSlider, "35");
+  resumedBackgroundSlider.dispatchEvent(new Event("input", { bubbles: true })); await paint();
+  resumedBackgroundSlider.blur(); await ready();
+  button("撤销").click(); await ready(); check(field("背景不透明度").value === "45", "背景滑块失焦收尾后可单步撤销");
+  host.querySelector<HTMLDetailsElement>(".text-effects")!.open = true; await paint();
   await number("不透明度", "0", "Enter");
   check(host.textContent!.includes("文字完全透明，可调整不透明度恢复") && host.querySelector('.layer-card')!.textContent!.includes("完全透明"), "0%文字在属性与图层提示恢复方式");
   host.querySelector<HTMLDetailsElement>(".text-effects")!.open = false; await paint();
