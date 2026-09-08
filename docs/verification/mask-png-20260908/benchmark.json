@@ -1,0 +1,358 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+  "date": "2026-09-08T12:16:45.150Z",
+  "iterations": 5,
+  "warmup": 1,
+  "results": [
+    {
+      "size": "1024x1024",
+      "oldBytes": 38075,
+      "newBytes": 12339,
+      "reductionPercent": 67.59290873276427,
+      "oldMedianMs": 7.400000095367432,
+      "newMedianMs": 21,
+      "oldRuns": [
+        {
+          "ms": 12,
+          "maxGap": 5.899999618530273,
+          "ticks": 2
+        },
+        {
+          "ms": 7.400000095367432,
+          "maxGap": 4.800000190734863,
+          "ticks": 1
+        },
+        {
+          "ms": 7,
+          "maxGap": 4.199999809265137,
+          "ticks": 1
+        },
+        {
+          "ms": 8.399999618530273,
+          "maxGap": 5.099999904632568,
+          "ticks": 1
+        },
+        {
+          "ms": 7,
+          "maxGap": 4.399999618530273,
+          "ticks": 1
+        }
+      ],
+      "newRuns": [
+        {
+          "ms": 21.299999713897705,
+          "maxGap": 5.899999618530273,
+          "ticks": 5
+        },
+        {
+          "ms": 21.5,
+          "maxGap": 4.5,
+          "ticks": 5
+        },
+        {
+          "ms": 20.300000190734863,
+          "maxGap": 5.700000286102295,
+          "ticks": 5
+        },
+        {
+          "ms": 20.299999713897705,
+          "maxGap": 4.599999904632568,
+          "ticks": 5
+        },
+        {
+          "ms": 21,
+          "maxGap": 5.5,
+          "ticks": 5
+        }
+      ],
+      "oldHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 1024,
+        "height": 1024,
+        "bitDepth": 8,
+        "colorType": 6,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IEND"
+        ]
+      },
+      "newHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 1024,
+        "height": 1024,
+        "bitDepth": 8,
+        "colorType": 0,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ]
+      }
+    },
+    {
+      "size": "2048x2048",
+      "oldBytes": 119120,
+      "newBytes": 35890,
+      "reductionPercent": 69.87071860308932,
+      "oldMedianMs": 26.09999990463257,
+      "newMedianMs": 49.09999990463257,
+      "oldRuns": [
+        {
+          "ms": 283.5,
+          "maxGap": 271.7999997138977,
+          "ticks": 2
+        },
+        {
+          "ms": 26.09999990463257,
+          "maxGap": 18,
+          "ticks": 1
+        },
+        {
+          "ms": 24.40000009536743,
+          "maxGap": 16.09999990463257,
+          "ticks": 1
+        },
+        {
+          "ms": 30.200000286102295,
+          "maxGap": 17.600000381469727,
+          "ticks": 3
+        },
+        {
+          "ms": 25.59999990463257,
+          "maxGap": 17,
+          "ticks": 1
+        }
+      ],
+      "newRuns": [
+        {
+          "ms": 55.799999713897705,
+          "maxGap": 13,
+          "ticks": 10
+        },
+        {
+          "ms": 51.60000038146973,
+          "maxGap": 12.900000095367432,
+          "ticks": 10
+        },
+        {
+          "ms": 48,
+          "maxGap": 10.699999809265137,
+          "ticks": 10
+        },
+        {
+          "ms": 47.89999961853027,
+          "maxGap": 11.599999904632568,
+          "ticks": 10
+        },
+        {
+          "ms": 49.09999990463257,
+          "maxGap": 10.900000095367432,
+          "ticks": 11
+        }
+      ],
+      "oldHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 2048,
+        "height": 2048,
+        "bitDepth": 8,
+        "colorType": 6,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IEND"
+        ]
+      },
+      "newHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 2048,
+        "height": 2048,
+        "bitDepth": 8,
+        "colorType": 0,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ]
+      }
+    },
+    {
+      "size": "3840x2160",
+      "oldBytes": 216665,
+      "newBytes": 52085,
+      "reductionPercent": 75.96058431218702,
+      "oldMedianMs": 50.30000019073486,
+      "newMedianMs": 81.5,
+      "oldRuns": [
+        {
+          "ms": 56.19999980926514,
+          "maxGap": 36.5,
+          "ticks": 3
+        },
+        {
+          "ms": 50.30000019073486,
+          "maxGap": 35.80000019073486,
+          "ticks": 1
+        },
+        {
+          "ms": 49.80000019073486,
+          "maxGap": 34.80000019073486,
+          "ticks": 1
+        },
+        {
+          "ms": 56.80000019073486,
+          "maxGap": 34,
+          "ticks": 4
+        },
+        {
+          "ms": 50.19999980926514,
+          "maxGap": 33,
+          "ticks": 2
+        }
+      ],
+      "newRuns": [
+        {
+          "ms": 81.5,
+          "maxGap": 23.200000286102295,
+          "ticks": 16
+        },
+        {
+          "ms": 82,
+          "maxGap": 23.90000009536743,
+          "ticks": 15
+        },
+        {
+          "ms": 87.59999990463257,
+          "maxGap": 23.90000009536743,
+          "ticks": 15
+        },
+        {
+          "ms": 79.5,
+          "maxGap": 24.09999990463257,
+          "ticks": 14
+        },
+        {
+          "ms": 79.90000009536743,
+          "maxGap": 23,
+          "ticks": 15
+        }
+      ],
+      "oldHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 3840,
+        "height": 2160,
+        "bitDepth": 8,
+        "colorType": 6,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IDAT",
+          "IEND"
+        ]
+      },
+      "newHeader": {
+        "signature": "137,80,78,71,13,10,26,10",
+        "width": 3840,
+        "height": 2160,
+        "bitDepth": 8,
+        "colorType": 0,
+        "chunks": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ]
+      }
+    }
+  ]
+}

@@ -1,4 +1,6 @@
 import { checkColorEditing } from "./color-editing";
+import { checkGrayMasks } from "./mask-png-checks";
+import { checkMaskCancellation } from "./mask-cancellation";
 import { checkPositioning } from "./positioning";
 import { checkAdjustments } from "./adjustments";
 import { Assets, toBlob } from "../src/editor/assets";
@@ -92,6 +94,8 @@ try {
   check(polygonHasArea({ ...outside, points: [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 100000 }] }, 1, size),
     "远离图片的松手位置按图片范围限制作面积检查");
   await checkSelectionInteractions(check);
+  await checkGrayMasks(check);
+  await checkMaskCancellation(check);
   await checkRequestLifecycle(check);
   await checkEditingTools(check);
   await checkDrawingRefinements(check);

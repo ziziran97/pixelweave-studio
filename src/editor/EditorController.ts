@@ -1227,7 +1227,8 @@ export class EditorController {
     this.notice = "正在消除所选区域，请稍候…"; this.configure(); this.emit();
     let beforeUrl: string | undefined, afterUrl: string | undefined;
     try {
-      const mask = await exportMask(snapshot.masks, snapshot.size);
+      const mask = await exportMask(snapshot.masks, snapshot.size, job.controller.signal);
+      if (!current()) return;
       const image = await renderDocument(snapshot, this.assets, "base");
       if (!current()) return;
       const result = await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal });

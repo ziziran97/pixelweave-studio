@@ -1,0 +1,62 @@
+{
+  "decoder": "Pillow",
+  "files": [
+    {
+      "file": "1024x1024-gray.png",
+      "sha256": "cadb0c55a8eb5ab56535e9ab0902cffffbcb50659b017e4696cce4794edb2d9b",
+      "bytes": 12339,
+      "size": [
+        1024,
+        1024
+      ],
+      "mode": "L",
+      "bitDepth": 8,
+      "colorType": 0,
+      "chunks": [
+        "IHDR",
+        "IDAT",
+        "IEND"
+      ],
+      "nonBinaryPixels": 0,
+      "mismatchedPixels": 0
+    },
+    {
+      "file": "2048x2048-gray.png",
+      "sha256": "48dfe1e270d8e6abcda951947c2b1c4940036f8c2a32683d9de48c764c1c96e8",
+      "bytes": 35890,
+      "size": [
+        2048,
+        2048
+      ],
+      "mode": "L",
+      "bitDepth": 8,
+      "colorType": 0,
+      "chunks": [
+        "IHDR",
+        "IDAT",
+        "IEND"
+      ],
+      "nonBinaryPixels": 0,
+      "mismatchedPixels": 0
+    },
+    {
+      "file": "3840x2160-gray.png",
+      "sha256": "e5b12e003a2f91da786338c3fe6d3aa7a33ba1da9903a8e0877e6c5b856042b3",
+      "bytes": 52085,
+      "size": [
+        3840,
+        2160
+      ],
+      "mode": "L",
+      "bitDepth": 8,
+      "colorType": 0,
+      "chunks": [
+        "IHDR",
+        "IDAT",
+        "IEND"
+      ],
+      "nonBinaryPixels": 0,
+      "mismatchedPixels": 0
+    }
+  ]
+}

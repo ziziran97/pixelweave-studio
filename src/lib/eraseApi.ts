@@ -22,7 +22,7 @@ async function resolveJsonImage(payload: unknown, apiUrl: string, signal: AbortS
   const url = new URL(value, new URL(apiUrl, location.href));
   if (!/^https?:$/.test(url.protocol)) throw new Error("接口结果图片 URL 协议不受支持");
   const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`读取结果图片失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(await responseError(response));
   return response.blob();
 }
 
@@ -32,8 +32,57 @@ export type EraseRequest = {
   documentId: string; revision: number; signal: AbortSignal;
 };
 
-/** Proposed v1 adapter. Configuring a URL does not establish backend compatibility. */
-export async function callEraseApi(input: EraseRequest) {
+const errorMessages = {
+  size: "图片过大，请调整后重试",
+  mask: "选区数据无效，请重新选择",
+  busy: "服务繁忙，请稍后重试",
+  unavailable: "消除服务暂不可用，请稍后重试",
+  network: "无法连接消除服务，请稍后重试",
+  unknown: "消除请求失败，请稍后重试",
+};
+
+// Business-backend aliases belong here; never display raw backend messages or HTML.
+const errorCodes = new Map<string, string>([
+  ...["FILE_TOO_LARGE", "IMAGE_TOO_LARGE", "PIXEL_LIMIT_EXCEEDED", "IMAGE_DIMENSIONS_EXCEEDED", "PAYLOAD_TOO_LARGE"]
+    .map(code => [code, errorMessages.size] as const),
+  ...["INVALID_MASK_FORMAT", "INVALID_MASK_SIZE", "MASK_SIZE_MISMATCH", "INVALID_MASK", "EMPTY_MASK", "INVALID_SELECTION"]
+    .map(code => [code, errorMessages.mask] as const),
+  ...["SERVICE_BUSY", "QUEUE_FULL", "QUEUE_LIMIT_EXCEEDED", "TASK_QUEUE_MAXED", "RATE_LIMIT_EXCEEDED"]
+    .map(code => [code, errorMessages.busy] as const),
+  ...["SERVICE_NOT_READY", "MODEL_NOT_READY", "SERVICE_UNAVAILABLE"]
+    .map(code => [code, errorMessages.unavailable] as const),
+]);
+
+function structuredError(payload: unknown, depth = 0): string | undefined {
+  if (!payload || typeof payload !== "object" || depth > 6) return;
+  const data = payload as Record<string, unknown>;
+  // Prefer the specific nested error over a generic outer business code.
+  for (const key of ["detail", "error", "data"]) {
+    const message = structuredError(data[key], depth + 1);
+    if (message) return message;
+  }
+  for (const value of [data.code, data.errorCode]) {
+    if (typeof value === "string") {
+      const message = errorCodes.get(value.trim().toUpperCase());
+      if (message) return message;
+    }
+  }
+}
+
+async function responseError(response: Response) {
+  // Some proxies mislabel JSON. A broken/HTML error body must not hide the HTTP error.
+  try {
+    const message = structuredError(await response.json());
+    if (message) return message;
+  } catch { /* Fall back to status without exposing the response body. */ }
+  if (response.status === 413) return errorMessages.size;
+  if (response.status === 429) return errorMessages.busy;
+  if ([502, 503, 504].includes(response.status)) return errorMessages.unavailable;
+  return errorMessages.unknown;
+}
+
+/** Frontend -> business backend. Ability-service credentials are managed by that backend. */
+async function requestErase(input: EraseRequest) {
   const form = new FormData();
   form.append("image", input.image, "image.jpg");
   form.append("mask", input.mask, "mask.png");
@@ -41,9 +90,27 @@ export async function callEraseApi(input: EraseRequest) {
     width: input.width, height: input.height, documentId: input.documentId, revision: input.revision,
     coordinateSystem: "0-1000", bboxOrder: "ymin,xmin,ymax,xmax" }));
   const response = await fetch(input.apiUrl, { method: "POST", body: form, signal: input.signal });
-  if (!response.ok) throw new Error(`图片编辑接口失败：HTTP ${response.status}`);
-  const result = (response.headers.get("content-type") ?? "").includes("application/json")
+  if (!response.ok) {
+    throw new Error(await responseError(response));
+  }
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const result = isJson
     ? await resolveJsonImage(await response.json(), input.apiUrl, input.signal) : await response.blob();
   if (!result.type.startsWith("image/")) throw new Error("接口没有返回有效图片");
   return result;
+}
+
+export async function callEraseApi(input: EraseRequest) {
+  try {
+    input.signal.throwIfAborted();
+    const result = await requestErase(input);
+    input.signal.throwIfAborted();
+    return result;
+  } catch (error) {
+    // Keep cancellation distinct, including aborts while consuming a response body.
+    input.signal.throwIfAborted();
+    if (error instanceof TypeError) throw new Error(errorMessages.network);
+    if (error instanceof SyntaxError) throw new Error("消除服务返回的数据无效，请稍后重试");
+    throw error;
+  }
 }

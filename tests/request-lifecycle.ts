@@ -2,6 +2,7 @@ import { EditorController } from "../src/editor/EditorController";
 import { toBlob } from "../src/editor/assets";
 import { editorConfig } from "../src/config";
 import type { EditorView } from "../src/types";
+import { pngHeader } from "./mask-png-checks";
 
 // Fixed images and manually released responses exercise races without a backend.
 // The fake transport deliberately ignores abort so late results reach the controller.
@@ -13,13 +14,13 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
   const editor = new EditorController(element, overlay, host, value => { view = value; });
   const state = () => view;
   const originalFetch = window.fetch, originalUrl = editorConfig.eraseApiUrl;
-  type Request = { response: Promise<Response>; respond: (response: Response) => void; notify: () => void; signal?: AbortSignal | null };
+  type Request = { response: Promise<Response>; respond: (response: Response) => void; reject: (error: Error) => void; notify: () => void; signal?: AbortSignal | null };
   const queue: Request[] = [], all: Request[] = [], executions: Promise<void>[] = [];
   const start = async () => {
-    let respond!: Request["respond"], notify!: Request["notify"];
-    const response = new Promise<Response>(resolve => { respond = resolve; });
+    let respond!: Request["respond"], reject!: Request["reject"], notify!: Request["notify"];
+    const response = new Promise<Response>((resolve, fail) => { respond = resolve; reject = fail; });
     const started = new Promise<void>(resolve => { notify = resolve; });
-    const request: Request = { response, respond, notify }; queue.push(request); all.push(request);
+    const request: Request = { response, respond, reject, notify }; queue.push(request); all.push(request);
     const done = editor.executeErase(); executions.push(done);
     await Promise.race([started, done.then(() => { throw new Error(`测试请求未发出：${state().notice}`); })]);
     return { request, done };
@@ -41,7 +42,7 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
     size: state().size, masks: state().masks, hasMask: state().hasMask, mode: state().eraseMode, brushSize: state().brushSize });
   try {
     editorConfig.eraseApiUrl = "/__request_lifecycle__";
-    window.fetch = (input, init) => {
+    window.fetch = async (input, init) => {
       if (input !== editorConfig.eraseApiUrl) return originalFetch(input, init);
       const request = queue.shift();
       if (!request) throw new Error("出现未预期的重复请求");
@@ -50,6 +51,18 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
       check(form.get("image") instanceof Blob && form.get("mask") instanceof Blob &&
         !form.has("prompt") && !form.has("regions") && metadata.mode === "erase" && metadata.target === "base",
         "消除请求仅提交底图、选区及消除元数据");
+      check((form.get("image") as Blob).type === "image/jpeg" && (form.get("mask") as Blob).type === "image/png" &&
+        !new Headers(init?.headers).has("Authorization") && metadata.documentId && Number.isInteger(metadata.revision) &&
+        metadata.coordinateSystem === "0-1000" && metadata.bboxOrder === "ymin,xmin,ymax,xmax",
+        "消除请求保留 JPEG、PNG 和坐标字段，不携带能力服务鉴权");
+      const header = await pngHeader(form.get("mask") as Blob);
+      const image = await createImageBitmap(form.get("image") as Blob);
+      try {
+        check(header.bitDepth === 8 && header.colorType === 0 && !header.chunks.includes("tRNS") &&
+          header.width === image.width && header.height === image.height && image.width === metadata.width && image.height === metadata.height &&
+          (form.get("mask") as File).name === "mask.png",
+          "实际 multipart 的 mask.png 为 8-bit 单通道，尺寸与 JPEG 和 metadata 一致");
+      } finally { image.close(); }
       request.signal = init?.signal; request.notify(); return request.response;
     };
     const source = await picture("#123456"), result = await picture("#008844"), replacement = await picture("#884422", 160, 120);
@@ -90,6 +103,22 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
 
     await editor.openImage(source, "异常结果检查", false); select();
     const unchanged = content();
+    const errors = [
+      ["结构化错误", Response.json({ detail: { code: "INVALID_MASK_FORMAT" } }, { status: 422 }), "选区数据无效，请重新选择"],
+      ["非 JSON 错误", new Response("<html>private error</html>", { status: 500 }), "消除请求失败，请稍后重试"],
+      ["网络异常", new TypeError("Failed to fetch"), "无法连接消除服务，请稍后重试"],
+    ] as const;
+    for (const [label, response, message] of errors) {
+      const attempt = await start(), count = all.length;
+      if (response instanceof Error) attempt.request.reject(response); else attempt.request.respond(response);
+      await attempt.done;
+      check(state().notice.includes(message) && !state().task && !state().pending && content() === unchanged && all.length === count,
+        `${label}显示中文提示，保留图片和选区且不自动重试`);
+    }
+    const cancelled = await start(); editor.cancelTask();
+    cancelled.request.reject(new DOMException("Aborted", "AbortError")); await cancelled.done;
+    check(state().notice === "已取消等待，图片和选区已保留" && !state().task && !state().pending && content() === unchanged,
+      "用户取消的 AbortError 不改为失败提示，图片和选区保留");
     const invalid = [
       ["尺寸不符", new Response(replacement)],
       ["非图片内容", new Response("invalid", { headers: { "content-type": "text/plain" } })],
