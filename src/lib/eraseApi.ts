@@ -43,14 +43,17 @@ const errorMessages = {
 
 // Business-backend aliases belong here; never display raw backend messages or HTML.
 const errorCodes = new Map<string, string>([
-  ...["FILE_TOO_LARGE", "IMAGE_TOO_LARGE", "PIXEL_LIMIT_EXCEEDED", "IMAGE_DIMENSIONS_EXCEEDED", "PAYLOAD_TOO_LARGE"]
+  ...["FILE_TOO_LARGE", "IMAGE_TOO_LARGE", "MASK_TOO_LARGE", "IMAGE_TOO_MANY_PIXELS", "PIXEL_LIMIT_EXCEEDED", "IMAGE_DIMENSIONS_EXCEEDED", "PAYLOAD_TOO_LARGE"]
     .map(code => [code, errorMessages.size] as const),
-  ...["INVALID_MASK_FORMAT", "INVALID_MASK_SIZE", "MASK_SIZE_MISMATCH", "INVALID_MASK", "EMPTY_MASK", "INVALID_SELECTION"]
+  ...["INVALID_MASK_FORMAT", "INVALID_MASK_SIZE", "MASK_SIZE_MISMATCH", "IMAGE_MASK_SIZE_MISMATCH", "UNSUPPORTED_MASK_TYPE", "INVALID_MASK", "EMPTY_MASK", "INVALID_SELECTION"]
     .map(code => [code, errorMessages.mask] as const),
-  ...["SERVICE_BUSY", "QUEUE_FULL", "QUEUE_LIMIT_EXCEEDED", "TASK_QUEUE_MAXED", "RATE_LIMIT_EXCEEDED"]
+  ...["SERVICE_BUSY", "QUEUE_FULL", "QUEUE_LIMIT_EXCEEDED", "TASK_QUEUE_MAXED", "RATE_LIMIT_EXCEEDED", "LAMA_INPAINT_BUSY", "LAMA_INPAINT_QUEUE_TIMEOUT"]
     .map(code => [code, errorMessages.busy] as const),
-  ...["SERVICE_NOT_READY", "MODEL_NOT_READY", "SERVICE_UNAVAILABLE"]
+  ...["SERVICE_NOT_READY", "MODEL_NOT_READY", "SERVICE_UNAVAILABLE", "LAMA_INPAINT_DISABLED", "LAMA_INPAINT_LOADING", "LAMA_INPAINT_INITIALIZATION_FAILED"]
     .map(code => [code, errorMessages.unavailable] as const),
+  ["LAMA_CREDENTIALS_MISSING", "请先填写本地消除服务账号和密钥，再重启生产测试服务"],
+  ["LAMA_CONFIG_INVALID", "消除服务本地配置无效，请检查配置后重启服务"],
+  ["LAMA_CONNECTION_FAILED", errorMessages.network],
 ]);
 
 function structuredError(payload: unknown, depth = 0): string | undefined {
@@ -76,6 +79,7 @@ async function responseError(response: Response) {
     if (message) return message;
   } catch { /* Fall back to status without exposing the response body. */ }
   if (response.status === 413) return errorMessages.size;
+  if (response.status === 401) return "消除服务鉴权失败，请检查本地账号和密钥";
   if (response.status === 429) return errorMessages.busy;
   if ([502, 503, 504].includes(response.status)) return errorMessages.unavailable;
   return errorMessages.unknown;

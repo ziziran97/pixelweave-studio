@@ -33,6 +33,10 @@ test("JPEG binary response preserves multipart files, all metadata and browser b
 });
 
 const cases = [
+  ["production size mismatch", 422, { detail: { code: "IMAGE_MASK_SIZE_MISMATCH" } }, "选区数据无效，请重新选择"],
+  ["production queue", 429, { detail: { code: "LAMA_INPAINT_QUEUE_TIMEOUT" } }, "服务繁忙，请稍后重试"],
+  ["local credentials missing", 503, { detail: { code: "LAMA_CREDENTIALS_MISSING" } }, "请先填写本地消除服务账号和密钥，再重启生产测试服务"],
+  ["production auth", 401, { status: false, results: null, msg: "Unauthorized" }, "消除服务鉴权失败，请检查本地账号和密钥"],
   ["ability detail", 422, { detail: { code: "INVALID_MASK_FORMAT", message: "private detail" } }, "选区数据无效，请重新选择"],
   ["business nesting", 500, { code: "FAIL", data: { error: { detail: { code: "MASK_SIZE_MISMATCH" } } } }, "选区数据无效，请重新选择"],
   ["pixel limit", 400, { code: "PIXEL_LIMIT_EXCEEDED" }, "图片过大，请调整后重试"],

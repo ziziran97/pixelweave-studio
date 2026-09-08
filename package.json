@@ -6,6 +6,9 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "dev": "vite --host 127.0.0.1",
+    "dev:production-test": "vite --mode production-test --host 127.0.0.1 --port 4177 --strictPort",
+    "build:production-test": "tsc -b && vite build --mode production-test",
+    "preview:production-test": "vite preview --mode production-test --host 127.0.0.1 --port 4177 --strictPort",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },

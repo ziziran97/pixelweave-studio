@@ -304,6 +304,18 @@ Pages 首次启用并部署成功后，演示地址为 [ziziran97.github.io/pixe
 
 ### 环境配置
 
+`生产测试` 分支提供本地生产接口转发入口：
+
+1. 在项目根目录的 `.env.production-test.local` 中自行填写 `LAMA_USERNAME` 和 `LAMA_API_KEY`。当前两项均留空，文件已被 Git 忽略；新检出项目时可从 `.env.production-test.local.example` 复制。不要改成 `VITE_` 前缀。值含 `$` 时按 Vite dotenv 规则写成 `\$`。
+2. 运行 `npm run dev:production-test`，访问 `http://127.0.0.1:4177/`。填写或更改凭据后重启该命令。普通 `npm run dev` 仍使用普通环境配置。
+3. 消除笔通过 `VITE_ERASER_API_URL=/api/eraser` 调用本机 Node 转发层；它从服务端配置读取凭据，向 `http://person-detector.zhcxkj.com/api/lama/inpaint` 发送 `image`、`mask` 两个文件，移除 metadata，添加 Basic Auth 和请求 ID，再转发 JPG 或错误响应。能力服务地址及默认 180 秒总超时在 `.env.production-test` 配置，必要时可在忽略的本地文件覆盖。
+
+生产测试转发层仅允许本机同源调用，不是公开部署的业务后端。凭据不会进入浏览器请求头或前端构建；GitHub Pages 只托管静态文件，不能运行此转发层。测试构建可执行 `npm run build:production-test` 后运行 `npm run preview:production-test`。该分支当前使用文档给出的 HTTP 服务地址。
+
+未填凭据时，消除笔会提示先填写本地账号和密钥，不向能力服务发请求；错误凭据显示鉴权失败。取消等待会断开转发请求，但不保证已开始的能力服务 GPU 推理停止。不自动重试，不落盘保存用户输入或输出图片。当前已验证本地转发和受控响应，真实生产消除仍需填写凭据后联调。
+
+普通业务后端接入继续使用以下配置：
+
 ```dotenv
 VITE_ERASER_API_URL=
 VITE_DEFAULT_IMAGE_URL=

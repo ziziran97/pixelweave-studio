@@ -3,6 +3,8 @@ dist/
 .env
 .env.local
 .env.*.local
+# Production-test credentials: never commit or expose through VITE_ variables.
+.env.production-test.local
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
