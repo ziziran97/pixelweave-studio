@@ -67,7 +67,7 @@ test("timeout aborts upstream request without retry", async t => {
   let calls = 0; const upstream = await serve(t, req => { calls++; req.resume(); });
   const base = await proxy(t, upstream, { timeoutMs: 80 });
   const response = await fetch(`${base}/api/eraser`, { method: "POST", body: form() });
-  assert.equal(response.status, 504); assert.equal(calls, 1);
+  assert.equal(response.status, 504); assert.equal((await response.json()).detail.code, "LAMA_REQUEST_TIMEOUT"); assert.equal(calls, 1);
 });
 test("browser cancellation closes the upstream connection", async t => {
   let started, closed;

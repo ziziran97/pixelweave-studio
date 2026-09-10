@@ -9,18 +9,21 @@ export function dataUrlToBlob(dataUrl: string) {
 }
 
 async function resolveJsonImage(payload: unknown, apiUrl: string, signal: AbortSignal) {
-  if (!payload || typeof payload !== "object") throw new Error("接口 JSON 中没有图片");
+  if (!payload || typeof payload !== "object") throw new Error(errorMessages.invalid);
   const data = payload as Record<string, unknown>;
   const nested = data.data && typeof data.data === "object" ? data.data as Record<string, unknown> : {};
   const candidate = [data.url, data.imageUrl, data.resultUrl, data.image, data.base64,
     nested.url, nested.imageUrl, nested.resultUrl, nested.image, nested.base64]
     .find(value => typeof value === "string" && value.trim()) as string | undefined;
-  if (!candidate) throw new Error("接口 JSON 中没有可识别的图片字段");
+  if (!candidate) throw new Error(errorMessages.invalid);
   const value = candidate.trim();
-  if (value.startsWith("data:")) return dataUrlToBlob(value);
-  if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 200) return dataUrlToBlob(`data:image/png;base64,${value}`);
-  const url = new URL(value, new URL(apiUrl, location.href));
-  if (!/^https?:$/.test(url.protocol)) throw new Error("接口结果图片 URL 协议不受支持");
+  let url: URL;
+  try {
+    if (value.startsWith("data:")) return dataUrlToBlob(value);
+    if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 200) return dataUrlToBlob(`data:image/png;base64,${value}`);
+    url = new URL(value, new URL(apiUrl, location.href));
+    if (!/^https?:$/.test(url.protocol)) throw new Error();
+  } catch { throw new Error(errorMessages.invalid); }
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(await responseError(response));
   return response.blob();
@@ -38,6 +41,8 @@ const errorMessages = {
   busy: "服务繁忙，请稍后重试",
   unavailable: "消除服务暂不可用，请稍后重试",
   network: "无法连接消除服务，请稍后重试",
+  timeout: "等待消除结果超时，后台可能仍在处理，请稍后重试",
+  invalid: "消除服务返回的图片无效，请稍后重试",
   unknown: "消除请求失败，请稍后重试",
 };
 
@@ -47,13 +52,16 @@ const errorCodes = new Map<string, string>([
     .map(code => [code, errorMessages.size] as const),
   ...["INVALID_MASK_FORMAT", "INVALID_MASK_SIZE", "MASK_SIZE_MISMATCH", "IMAGE_MASK_SIZE_MISMATCH", "UNSUPPORTED_MASK_TYPE", "INVALID_MASK", "EMPTY_MASK", "INVALID_SELECTION"]
     .map(code => [code, errorMessages.mask] as const),
-  ...["SERVICE_BUSY", "QUEUE_FULL", "QUEUE_LIMIT_EXCEEDED", "TASK_QUEUE_MAXED", "RATE_LIMIT_EXCEEDED", "LAMA_INPAINT_BUSY", "LAMA_INPAINT_QUEUE_TIMEOUT"]
+  ...["SERVICE_BUSY", "QUEUE_FULL", "QUEUE_LIMIT_EXCEEDED", "TASK_QUEUE_MAXED", "RATE_LIMIT_EXCEEDED", "LAMA_INPAINT_BUSY"]
     .map(code => [code, errorMessages.busy] as const),
   ...["SERVICE_NOT_READY", "MODEL_NOT_READY", "SERVICE_UNAVAILABLE", "LAMA_INPAINT_DISABLED", "LAMA_INPAINT_LOADING", "LAMA_INPAINT_INITIALIZATION_FAILED"]
     .map(code => [code, errorMessages.unavailable] as const),
   ["LAMA_CREDENTIALS_MISSING", "请先填写本地消除服务账号和密钥，再重启生产测试服务"],
   ["LAMA_CONFIG_INVALID", "消除服务本地配置无效，请检查配置后重启服务"],
   ["LAMA_CONNECTION_FAILED", errorMessages.network],
+  ["LAMA_REQUEST_TIMEOUT", errorMessages.timeout],
+  ["LAMA_INPAINT_QUEUE_TIMEOUT", "排队等待超时，请稍后重试"],
+  ["LAMA_INVALID_RESPONSE", errorMessages.invalid],
 ]);
 
 function structuredError(payload: unknown, depth = 0): string | undefined {
@@ -81,7 +89,8 @@ async function responseError(response: Response) {
   if (response.status === 413) return errorMessages.size;
   if (response.status === 401) return "消除服务鉴权失败，请检查本地账号和密钥";
   if (response.status === 429) return errorMessages.busy;
-  if ([502, 503, 504].includes(response.status)) return errorMessages.unavailable;
+  if ([408, 504].includes(response.status)) return errorMessages.timeout;
+  if ([502, 503].includes(response.status)) return errorMessages.unavailable;
   return errorMessages.unknown;
 }
 
@@ -100,7 +109,7 @@ async function requestErase(input: EraseRequest) {
   const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
   const result = isJson
     ? await resolveJsonImage(await response.json(), input.apiUrl, input.signal) : await response.blob();
-  if (!result.type.startsWith("image/")) throw new Error("接口没有返回有效图片");
+  if (!result.type.startsWith("image/")) throw new Error(errorMessages.invalid);
   return result;
 }
 

@@ -4,7 +4,7 @@ import { editorConfig } from "../config";
 import { callEraseApi } from "../lib/eraseApi";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
-import type { DocumentSnapshot, EditorView, EraseMode, ImageAdjustments, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
+import type { DocumentSnapshot, EditorView, EraseMode, EraseStage, ImageAdjustments, ImageRegion, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
 import { Assets, defaultImage, validateJpeg } from "./assets";
 import type { ImageAsset } from "./assets";
 import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumentContent, uid } from "./model";
@@ -48,7 +48,7 @@ export class EditorController {
   private disposed = false;
   private ready = false;
   private busy = false;
-  private job?: { id: string; controller: AbortController };
+  private job?: { id: string; controller: AbortController; stage: EraseStage; startedAt: number };
   private processingAssets = new Map<string, Set<string>>();
   private pending?: PendingResult;
   private confirmation?: EditorConfirmation;
@@ -255,6 +255,7 @@ export class EditorController {
     if (this.fontRetry && (this.fontRetry.generation !== this.generation || this.fontRetry.selectedId !== single?.editorId)) this.fontRetry = undefined;
     const view: EditorView = {
       ready: this.ready, busy: this.busy, task: !!this.job, notice: this.notice, noticeId: this.noticeId, noticePresentation: this.noticePresentation, tool: this.tool, eraseMode: this.selection.mode,
+      eraseStage: this.job?.stage, eraseStageStartedAt: this.job?.startedAt,
       workspace: this.workspace, drawingTool: this.lastDrawingTool, propertiesRequest: this.propertiesRequest,
       maskOperation: this.operation, brushSize: this.brushSize, drawSize: this.drawSize, color: this.color,
       zoom: this.canvas.getZoom(), size: this.size,
@@ -1213,39 +1214,68 @@ export class EditorController {
     }
   }
 
+  private setEraseStage(stage: EraseStage) {
+    if (!this.job) return;
+    this.job.stage = stage; this.job.startedAt = Date.now();
+    this.notice = { preparing: "正在准备图片和选区…", waiting: "正在等待消除结果…", preview: "正在生成对比预览…" }[stage];
+    this.emit();
+  }
+
+  private async generateResultPreview(snapshot: DocumentSnapshot, result: PendingResult, current: () => boolean) {
+    let beforeUrl: string | undefined, afterUrl: string | undefined;
+    try {
+      const next = applyResult(snapshot, this.imageData(this.assets.get(result.assetId), "消除结果"));
+      const before = await renderDocument(snapshot, this.assets, "final");
+      if (!current()) return;
+      const after = await renderDocument(next, this.assets, "final");
+      if (!current()) return;
+      beforeUrl = URL.createObjectURL(before); afterUrl = URL.createObjectURL(after);
+      this.pending = { ...result, beforeUrl, afterUrl, previewPreparing: false, previewError: undefined };
+      beforeUrl = afterUrl = undefined;
+      this.notice = "消除结果已返回，请检查后使用或放弃";
+    } catch {
+      if (current()) {
+        this.pending = { ...result, previewPreparing: false,
+          previewError: "对比图片生成失败，消除结果已保留。可重新生成预览，无需重新消除。" };
+        this.notice = "对比图片生成失败，消除结果已保留";
+      }
+    } finally {
+      if (beforeUrl) URL.revokeObjectURL(beforeUrl); if (afterUrl) URL.revokeObjectURL(afterUrl);
+    }
+  }
+
   async executeErase() {
     if (this.locked) return;
     if (!this.hasMask) { this.notice = "当前选区为空，请先添加需要修改的区域"; this.emit(); return; }
     const apiUrl = editorConfig.eraseApiUrl;
     if (!apiUrl) { this.notice = "消除服务尚未接入，图片和选区已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
     if (this.selection.draft || this.shapeDraft) { this.notice = "请先完成或取消当前未闭合选区／图形"; this.emit(); return; }
+    // The result dialog owns keyup events. End temporary pan before the request
+    // so a Space release inside that dialog cannot leave the editor panning.
+    this.selection.endMove(); this.space = false; this.panning = undefined;
     this.finishText(); this.commit();
     const snapshot = this.snapshot(), documentId = this.documentId, revision = this.revision;
-    const job = { id: uid("request"), controller: new AbortController() }; this.job = job;
+    const job = { id: uid("request"), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now() }; this.job = job;
     const heldAssets = assetIds(snapshot); this.processingAssets.set(job.id, heldAssets);
     const current = () => !this.disposed && this.job === job && !job.controller.signal.aborted && this.documentId === documentId && this.revision === revision;
-    this.notice = "正在消除所选区域，请稍候…"; this.configure(); this.emit();
-    let beforeUrl: string | undefined, afterUrl: string | undefined;
+    this.configure(); this.setEraseStage("preparing");
     try {
-      const mask = await exportMask(snapshot.masks, snapshot.size, job.controller.signal);
+      let region: ImageRegion | undefined;
+      const mask = await exportMask(snapshot.masks, snapshot.size, job.controller.signal, bounds => { region = bounds; });
       if (!current()) return;
       const image = await renderDocument(snapshot, this.assets, "base");
       if (!current()) return;
+      this.setEraseStage("waiting");
       const result = await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal });
       if (!current()) return;
-      const asset = await this.assets.add(result);
+      this.setEraseStage("preview");
+      let asset: ImageAsset;
+      try { asset = await this.assets.add(result); }
+      catch { if (!current()) return; throw new Error("消除结果图片无法读取，请稍后重试"); }
       heldAssets.add(asset.id);
       if (!current()) return;
-      if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("结果尺寸与输入不同，未采用。当前版本仅支持同尺寸编辑，请与后端核对");
-      const next = applyResult(snapshot, this.imageData(asset, "消除结果"));
-      const before = await renderDocument(snapshot, this.assets, "final");
-      if (!current()) return;
-      const after = await renderDocument(next, this.assets, "final");
-      if (!current()) return;
-      beforeUrl = URL.createObjectURL(before); afterUrl = URL.createObjectURL(after);
-      this.pending = { assetId: asset.id, beforeUrl, afterUrl, documentId, revision };
-      beforeUrl = afterUrl = undefined;
-      this.notice = "消除结果已返回，请检查后使用或放弃";
+      if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("消除结果尺寸与当前图片不一致，未采用，请稍后重试");
+      await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region }, current);
     } catch (error) {
       if (current()) {
         const reason = error instanceof TypeError ? "无法连接消除服务，请稍后重试" : (error as Error)?.message || "请稍后重试";
@@ -1253,7 +1283,25 @@ export class EditorController {
       }
     }
     finally {
-      if (beforeUrl) URL.revokeObjectURL(beforeUrl); if (afterUrl) URL.revokeObjectURL(afterUrl);
+      this.processingAssets.delete(job.id);
+      if (!this.disposed) {
+        if (this.job === job) { this.job = undefined; this.configure(); this.emit(); }
+        this.collect();
+      }
+    }
+  }
+  async retryResultPreview() {
+    const pending = this.pending;
+    if (!pending?.previewError || this.job || this.busy || this.confirmation || this.disposed) return;
+    if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult(); return; }
+    const snapshot = this.snapshot();
+    const job = { id: uid("preview"), controller: new AbortController(), stage: "preview" as EraseStage, startedAt: Date.now() }; this.job = job;
+    const heldAssets = assetIds(snapshot); heldAssets.add(pending.assetId); this.processingAssets.set(job.id, heldAssets);
+    this.pending = { ...pending, previewPreparing: true }; this.configure(); this.setEraseStage("preview");
+    const current = () => !this.disposed && this.job === job && !job.controller.signal.aborted &&
+      this.pending?.assetId === pending.assetId && this.documentId === pending.documentId && this.revision === pending.revision;
+    try { await this.generateResultPreview(snapshot, pending, current); }
+    finally {
       this.processingAssets.delete(job.id);
       if (!this.disposed) {
         if (this.job === job) { this.job = undefined; this.configure(); this.emit(); }
@@ -1264,17 +1312,19 @@ export class EditorController {
   cancelTask() {
     if (!this.job) return;
     this.job.controller.abort(); this.job = undefined;
+    if (this.pending?.previewPreparing) this.pending = { ...this.pending, previewPreparing: false };
     this.notice = "已取消等待，图片和选区已保留";
     this.configure(); this.emit();
   }
   discardResult() {
     if (!this.pending) return;
+    if (this.pending.previewPreparing) this.cancelTask();
     URL.revokeObjectURL(this.pending.beforeUrl); URL.revokeObjectURL(this.pending.afterUrl);
     this.pending = undefined; this.notice = "已放弃结果，当前图片未改变"; this.collect(); this.configure(); this.emit();
   }
   async acceptResult() {
     const pending = this.pending;
-    if (!pending || this.busy || this.confirmation) return;
+    if (!pending || this.busy || this.job || this.confirmation || pending.previewError || !pending.beforeUrl || !pending.afterUrl) return;
     if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult(); this.notice = "文档已变化，旧结果不能采用"; this.emit(); return; }
     this.pending = { ...pending, acceptError: undefined };
     this.busy = true; this.configure(); this.emit();

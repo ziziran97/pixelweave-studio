@@ -34,7 +34,12 @@ test("JPEG binary response preserves multipart files, all metadata and browser b
 
 const cases = [
   ["production size mismatch", 422, { detail: { code: "IMAGE_MASK_SIZE_MISMATCH" } }, "选区数据无效，请重新选择"],
-  ["production queue", 429, { detail: { code: "LAMA_INPAINT_QUEUE_TIMEOUT" } }, "服务繁忙，请稍后重试"],
+  ["production queue timeout", 429, { detail: { code: "LAMA_INPAINT_QUEUE_TIMEOUT" } }, "排队等待超时，请稍后重试"],
+  ["bridge processing timeout", 504, { detail: { code: "LAMA_REQUEST_TIMEOUT" } }, "等待消除结果超时，后台可能仍在处理，请稍后重试"],
+  ["HTTP processing timeout", 504, "<html>gateway timeout</html>", "等待消除结果超时，后台可能仍在处理，请稍后重试"],
+  ["HTTP request timeout", 408, "", "等待消除结果超时，后台可能仍在处理，请稍后重试"],
+  ["invalid result", 502, { detail: { code: "LAMA_INVALID_RESPONSE" } }, "消除服务返回的图片无效，请稍后重试"],
+  ["bridge connection failed", 502, { detail: { code: "LAMA_CONNECTION_FAILED" } }, "无法连接消除服务，请稍后重试"],
   ["local credentials missing", 503, { detail: { code: "LAMA_CREDENTIALS_MISSING" } }, "请先填写本地消除服务账号和密钥，再重启生产测试服务"],
   ["production auth", 401, { status: false, results: null, msg: "Unauthorized" }, "消除服务鉴权失败，请检查本地账号和密钥"],
   ["ability detail", 422, { detail: { code: "INVALID_MASK_FORMAT", message: "private detail" } }, "选区数据无效，请重新选择"],
@@ -100,3 +105,14 @@ test("malformed successful JSON has a readable response error", async t => {
   t.mock.method(globalThis, "fetch", async () => new Response("{", { headers: { "content-type": "application/json" } }));
   await assert.rejects(callEraseApi(input()), { message: "消除服务返回的数据无效，请稍后重试" });
 });
+
+for (const body of [{}, { image: "data:image/png;base64,not-valid-@" }, { url: "http://[invalid" }, { url: "file:///private.jpg" }]) {
+  test(`invalid JSON image is classified as an invalid result: ${JSON.stringify(body)}`, async t => {
+    const location = Object.getOwnPropertyDescriptor(globalThis, "location");
+    Object.defineProperty(globalThis, "location", { configurable: true, value: { href: "http://localhost/" } });
+    t.after(() => { if (location) Object.defineProperty(globalThis, "location", location); else delete globalThis.location; });
+    const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(body));
+    await assert.rejects(callEraseApi(input()), { message: "消除服务返回的图片无效，请稍后重试" });
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+}

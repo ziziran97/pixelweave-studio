@@ -23,6 +23,8 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
     const request: Request = { response, respond, reject, notify }; queue.push(request); all.push(request);
     const done = editor.executeErase(); executions.push(done);
     await Promise.race([started, done.then(() => { throw new Error(`测试请求未发出：${state().notice}`); })]);
+    if (all.length === 1) check(state().eraseStage === "waiting" && !!state().eraseStageStartedAt && state().notice.includes("正在等待消除结果"),
+      "请求实际发出后进入服务等待阶段并开始计时");
     return { request, done };
   };
   const picture = async (color: string, width = 128, height = 96) => {
@@ -120,14 +122,14 @@ export async function checkRequestLifecycle(check: (condition: boolean, message:
     check(state().notice === "已取消等待，图片和选区已保留" && !state().task && !state().pending && content() === unchanged,
       "用户取消的 AbortError 不改为失败提示，图片和选区保留");
     const invalid = [
-      ["尺寸不符", new Response(replacement)],
-      ["非图片内容", new Response("invalid", { headers: { "content-type": "text/plain" } })],
-      ["损坏图片", new Response("invalid", { headers: { "content-type": "image/png" } })],
-      ["JSON 缺少图片", new Response("{}", { headers: { "content-type": "application/json" } })],
+      ["尺寸不符", new Response(replacement), "消除结果尺寸与当前图片不一致"],
+      ["非图片内容", new Response("invalid", { headers: { "content-type": "text/plain" } }), "消除服务返回的图片无效"],
+      ["损坏图片", new Response("invalid", { headers: { "content-type": "image/png" } }), "消除结果图片无法读取"],
+      ["JSON 缺少图片", new Response("{}", { headers: { "content-type": "application/json" } }), "消除服务返回的图片无效"],
     ] as const;
-    for (const [label, response] of invalid) {
+    for (const [label, response, message] of invalid) {
       const attempt = await start(); attempt.request.respond(response); await attempt.done;
-      check(!state().task && !state().pending && state().noticePresentation === "persistent" && content() === unchanged,
+      check(!state().task && !state().pending && state().noticePresentation === "persistent" && state().notice.includes(message) && content() === unchanged,
         `${label}被拒绝，退出等待且保留图片和选区`);
       const retry = await start(); retry.request.respond(new Response(result)); await retry.done;
       check(!!state().pending && !state().task && content() === unchanged, `${label}后可用原选区成功重试`);

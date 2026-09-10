@@ -2,6 +2,8 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { EraserPanel } from "../src/components/EraserPanel";
 import { ResultPreview } from "../src/components/ResultPreview";
+import { EraserNotice } from "../src/components/EraserNotice";
+import type { PendingResult } from "../src/types";
 import { createEditor, frame, picture, settle } from "./editing-tools";
 import { toBlob } from "../src/editor/assets";
 import { editorConfig } from "../src/config";
@@ -68,7 +70,74 @@ try {
   editorTest.editor.setCompare(false);
   editorConfig.eraseApiUrl = ""; await editorTest.editor.executeErase();
   check(editorTest.state().noticePresentation === "persistent" && editorTest.state().notice.includes("图片和选区已保留"), "服务未接入时保留选区并持续显示原因");
+  const clock = Date.now, startedAt = clock();
+  try {
+    Date.now = () => startedAt + 17500;
+    const notice = async (stage: "preparing" | "waiting" | "preview", since = startedAt) => {
+      root.render(createElement(EraserNotice, { view: { ...editorTest.state(), task: true, eraseStage: stage, eraseStageStartedAt: since, notice: "处理中" }, cancelTask: () => {} }));
+      await paint();
+    };
+    await notice("waiting");
+    check(host.textContent!.includes("已等待 17 秒"), "服务等待超过十秒显示实际已等待时间");
+    await notice("preview");
+    check(!host.querySelector(".erase-elapsed"), "结果返回后不继续累计服务等待时间");
+    await notice("waiting", Date.now());
+    check(!host.querySelector(".erase-elapsed"), "新请求重新计时，不继承上次等待秒数");
+    await notice("preparing");
+    check(!host.querySelector(".erase-elapsed"), "准备阶段不显示服务等待秒数");
+  } finally { Date.now = clock; }
   editorTest.dispose(); root.render(null); await paint(); host.style.width = "auto";
+
+  // Exercise the real request -> dialog -> editor transition while Space is held.
+  // A keyup owned by the dialog must not leave the canvas in temporary pan mode.
+  const originalFetch = window.fetch;
+  try {
+    editorConfig.eraseApiUrl = "/__eraser_keyboard__";
+    const output = await picture("#008844", 128, 96);
+    window.fetch = async (url, options) => url === editorConfig.eraseApiUrl ? new Response(output) : originalFetch(url, options);
+    for (const useResult of [false, true]) {
+      const fixture = createEditor(), { editor, state, drag, dispose } = fixture;
+      const label = useResult ? "使用结果" : "放弃结果";
+      const space = (target: EventTarget, type: "keydown" | "keyup", repeat = false) => target.dispatchEvent(new KeyboardEvent(type, {
+        key: " ", code: "Space", bubbles: true, cancelable: true, repeat,
+      }));
+      const viewport = () => JSON.stringify(editor.canvas.viewportTransform);
+      try {
+        await editor.openImage(await picture("#123456", 128, 96), "空格状态恢复", false);
+        editor.setEraseMode("rect"); drag(10, 10, 40, 30);
+        const beforePan = viewport(), beforeMasks = state().masks;
+        space(editor.canvas.upperCanvasEl, "keydown"); drag(50, 40, 55, 43);
+        check(viewport() !== beforePan && state().masks === beforeMasks, `${label}：请求前按住空格可正常临时平移，保留选区`);
+        await editor.executeErase();
+        const pending = state().pending!;
+        let finished: Promise<void> | undefined;
+        const finish = (use: boolean) => {
+          finished = (async () => {
+            if (use) await editor.acceptResult(); else editor.discardResult();
+            root.render(null);
+          })();
+        };
+        root.render(createElement(ResultPreview, { result: pending, size: state().size, busy: false,
+          accept: () => finish(true), discard: () => finish(false), retryPreview: () => {} }));
+        await settle(() => !!host.querySelector<HTMLButtonElement>(".result-footer .primary-button") && !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
+        const previewDialog = host.querySelector<HTMLDialogElement>("dialog")!;
+        previewDialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        const cancel = new Event("cancel", { cancelable: true }); previewDialog.dispatchEvent(cancel);
+        check(cancel.defaultPrevented && previewDialog.open && state().pending === pending && !state().confirmation,
+          `${label}：结果弹窗仍隔离 Esc，不放弃结果或触发关闭编辑`);
+        const action = host.querySelector<HTMLButtonElement>(`.result-footer .${useResult ? "primary" : "secondary"}-button`)!;
+        space(action, "keyup"); action.click(); await finished; await paint();
+        const afterResult = viewport(), savedMasks = state().masks;
+        // Auto-repeat from the old press must not reactivate temporary pan either.
+        space(editor.canvas.upperCanvasEl, "keydown", true); drag(60, 50, 85, 75);
+        check(!state().pending && state().tool === "erase" && state().masks === savedMasks + 1 && viewport() === afterResult,
+          `${label}：在弹窗内松开空格后可直接继续选区，残留重复按键不触发平移`);
+        const completedMasks = state().masks;
+        space(editor.canvas.upperCanvasEl, "keydown"); drag(50, 40, 55, 43); space(editor.canvas.upperCanvasEl, "keyup");
+        check(viewport() !== afterResult && state().masks === completedMasks, `${label}：再次按住空格仍可正常临时平移，松手保留选区`);
+      } finally { root.render(null); await paint(); dispose(); }
+    }
+  } finally { window.fetch = originalFetch; editorConfig.eraseApiUrl = configUrl; }
 
   // Fixed detail-rich images exercise zoom/pan; these are not simulated AI results.
   for (const label of ["消除前 · 固定样图", "消除后 · 固定样图"]) {
@@ -82,16 +151,24 @@ try {
     ctx.fillStyle = "#233348"; ctx.font = "36px sans-serif"; ctx.fillText(label, 70, 80);
     urls.push(URL.createObjectURL(await toBlob(canvas, "image/jpeg", .94)));
   }
-  const result = { assetId: "fixture", beforeUrl: urls[0], afterUrl: urls[1], documentId: "fixture", revision: 0 };
-  let accepted = 0, discarded = 0;
-  const show = (busy = false, key = "check", acceptError?: string) => root.render(createElement(ResultPreview, { key, result: { ...result, acceptError }, size, busy,
-    accept: () => { accepted++; root.render(null); }, discard: () => { discarded++; root.render(null); } }));
+  const result = { assetId: "fixture", beforeUrl: urls[0], afterUrl: urls[1], documentId: "fixture", revision: 0, region: { x: 80, y: 70, width: 120, height: 40 } };
+  let accepted = 0, discarded = 0, regenerated = 0;
+  const show = (busy = false, key = "check", acceptError?: string, changes: Partial<PendingResult> = {}) => root.render(createElement(ResultPreview, { key, result: { ...result, acceptError, ...changes }, size, busy,
+    accept: () => { accepted++; root.render(null); }, discard: () => { discarded++; root.render(null); }, retryPreview: () => { regenerated++; } }));
   show();
   await settle(() => !!host.querySelector<HTMLButtonElement>(".result-footer .primary-button") && !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
   const images = () => [...host.querySelectorAll<HTMLImageElement>(".result-images img")];
   const aligned = () => images()[0].style.cssText === images()[1].style.cssText;
   const pane = () => host.querySelector<HTMLDivElement>(".result-viewport")!;
   check(aligned() && parseFloat(images()[0].style.width) <= pane().clientWidth + 1, "初始左右适配显示且保持同一位置");
+  const fittedWidth = images()[0].width;
+  button("查看本次消除区域").click(); await paint();
+  const imageBounds = images()[0].getBoundingClientRect(), paneBounds = pane().getBoundingClientRect(), scale = images()[0].width / size.width;
+  check(images()[0].width > fittedWidth && aligned() && imageBounds.left + result.region.x * scale >= paneBounds.left &&
+    imageBounds.top + result.region.y * scale >= paneBounds.top && imageBounds.left + (result.region.x + result.region.width) * scale <= paneBounds.right &&
+    imageBounds.top + (result.region.y + result.region.height) * scale <= paneBounds.bottom, "消除区域定位到边角选区并保留周边，两侧同步且不改原图尺寸");
+  button("适配对比图片").click(); await paint();
+  check(images()[0].width === fittedWidth && aligned(), "局部查看后仍可一键返回整图适配");
   button("100% 查看对比图片").click(); await paint();
   check(images()[0].width === size.width && aligned(), "100% 按图片原尺寸展示，两侧同步");
   const initial = images()[0].style.transform;
@@ -133,6 +210,20 @@ try {
   check(discarded === 0 && !!host.querySelector<HTMLDialogElement>("dialog")?.open, "Esc 保留结果弹窗，不触发放弃");
   host.querySelector<HTMLButtonElement>(".result-footer .secondary-button")!.click(); await paint();
   check(discarded === 1 && !host.querySelector("dialog"), "只有点击放弃结果才关闭弹窗并放弃结果");
+  const recovery = { beforeUrl: "", afterUrl: "", previewError: "对比图片生成失败，消除结果已保留。可重新生成预览，无需重新消除。" };
+  show(false, "generation", undefined, recovery); await paint();
+  check(!images().length && host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled && host.textContent!.includes("无需重新消除"), "预览生成失败不请求空图片地址，并禁止采用未生成的预览");
+  host.querySelector<HTMLButtonElement>(".result-recovery button")!.click(); await paint();
+  check(regenerated === 1 && accepted === 1 && discarded === 1, "重新生成预览仅触发恢复，不采用或放弃结果");
+  show(false, "generation", undefined, { ...recovery, previewPreparing: true }); await paint();
+  check(host.querySelector<HTMLButtonElement>(".result-recovery button")!.disabled && host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled &&
+    !host.querySelector<HTMLButtonElement>(".result-footer .secondary-button")!.disabled, "预览重新生成期间防止重复操作，仍可明确放弃结果");
+  show(false, "generation");
+  await settle(() => !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
+  check(aligned() && pane().clientWidth > 0 && !host.querySelector(".result-recovery"), "重新生成成功后恢复图片加载、同步查看与采用");
+  show(false, "generation", undefined, { region: undefined }); await paint();
+  check(button("查看本次消除区域").disabled, "缺少区域信息时不猜测定位位置");
+  root.render(null); await paint();
   const preview = document.getElementById("preview")!; preview.hidden = false;
   preview.onclick = () => show(false, `preview-${Date.now()}`);
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }

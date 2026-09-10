@@ -108,16 +108,20 @@ export type TextProperties = {
   shadowOffsetX: number; shadowOffsetY: number;
   shadowEnabled?: boolean; strokeEnabled?: boolean; boldRestoreWeight?: string;
 };
+export type ImageRegion = { x: number; y: number; width: number; height: number };
+export type EraseStage = "preparing" | "waiting" | "preview";
 export type PendingResult = {
   assetId: string; beforeUrl: string; afterUrl: string;
   documentId: string; revision: number;
   acceptError?: string;
+  previewError?: string; previewPreparing?: boolean; region?: ImageRegion;
 };
 export type ConfirmationKind = "replace" | "reset" | "upload" | "close" | "switch";
 export type EditorConfirmation = { id: string; kind: ConfirmationKind };
 export type EditorView = {
   confirmation?: EditorConfirmation;
   ready: boolean; busy: boolean; task: boolean; notice: string;
+  eraseStage?: EraseStage; eraseStageStartedAt?: number;
   noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
   tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";
   workspace: WorkspaceId; drawingTool: "draw" | "rect" | "circle"; propertiesRequest: number;

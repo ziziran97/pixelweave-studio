@@ -1,7 +1,7 @@
 import { exportMask, paintStroke } from "../src/editor/mask";
 import { binaryPixels } from "../src/editor/geometry";
 import { toBlob } from "../src/editor/assets";
-import type { DocumentSize, MaskStroke } from "../src/types";
+import type { DocumentSize, ImageRegion, MaskStroke } from "../src/types";
 
 // Exact pre-change path, retained only as an independent browser-decoded baseline.
 export async function legacyMask(strokes: MaskStroke[], size: DocumentSize) {
@@ -75,8 +75,15 @@ export async function checkGrayMasks(check: (value: boolean, label: string) => v
     ["混合加选", [brush, polygon]], ["矩形减选", [polygon, { ...rect, operation: "subtract", points: [{ x: 25, y: 20 }, { x: 50, y: 50 }] }]],
     ["画笔和多边形减选", [rect, { ...brush, operation: "subtract" }, { ...polygon, operation: "subtract" }]],
     ["减空再加选", [rect, { ...rect, operation: "subtract" }, brush]],
+    ["减选移除左半边", [rect, { ...rect, operation: "subtract", points: [{ x: 0, y: 0 }, { x: 100, y: 93 }] }]],
   ] as [string, MaskStroke[]][]) {
-    await compareMasks(await legacyMask(strokes, size), await exportMask(strokes, size), size, check, label);
+    let bounds: ImageRegion | undefined;
+    const blob = await exportMask(strokes, size, undefined, value => { bounds = value; });
+    await compareMasks(await legacyMask(strokes, size), blob, size, check, label);
+    const pixels = await decode(blob), xs: number[] = [], ys: number[] = [];
+    for (let y = 0; y < size.height; y++) for (let x = 0; x < size.width; x++) if (pixels.data[(y * size.width + x) * 4] === 255) { xs.push(x); ys.push(y); }
+    check(JSON.stringify(bounds) === JSON.stringify({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs) + 1, height: Math.max(...ys) - Math.min(...ys) + 1 }),
+      `${label}：定位范围与独立解码后的最终白色像素一致`);
   }
   for (const strokes of [[], [{ ...brush, operation: "subtract" }], [rect, { ...rect, operation: "subtract" }]] as MaskStroke[][]) {
     let message = "";

@@ -258,12 +258,15 @@ summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px;
 .result-view-tools > span { font-size: 11px; color: #718397; }
 .result-view-tools > div { display: flex; align-items: center; border: 1px solid #dce4ec; border-radius: 7px; overflow: hidden; }
 .result-view-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 32px; min-width: 32px; padding: 0 9px; border: 0; background: white; color: #456682; font-size: 11px; }
+.result-view-tools button[aria-label="查看本次消除区域"] { border-right: 1px solid #dce4ec; white-space: nowrap; }
+.erase-elapsed { color: #718397; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .result-view-tools output { min-width: 44px; text-align: center; font-size: 11px; color: #526e88; }
 .result-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
 .result-footer p { margin: 0; }
 .result-footer .dialog-actions { margin: 0; }
 .result-recovery { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
 .result-dialog .result-error, .result-recovery p { color: #a34127; }
+.result-recovery p[role="status"] { color: #7890a4; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 @media (max-width: 1200px) { .workspace { --rail-width: 64px; --settings-width: 234px; --stage-min: 330px; --layers-width: 222px; } .topbar { grid-template-columns: 215px 1fr auto; padding: 0 12px; gap: 5px; } .document-size { display: none; } .panel-content { --panel-padding: 13px; } }
 @media (max-height: 760px) { .tool-button { height: 45px; } }

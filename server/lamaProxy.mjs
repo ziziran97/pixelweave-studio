@@ -36,7 +36,9 @@ export function createLamaProxy({ apiUrl, username, apiKey, timeoutMs = 180000 }
     const controller = new AbortController();
     const abortUpload = () => { if (!req.complete) req.destroy(); };
     controller.signal.addEventListener("abort", abortUpload, { once: true });
-    const disconnect = () => controller.abort();
+    // ServerResponse also emits close after a normal finish. Aborting an already
+    // consumed upstream body can race with Undici's stream completion.
+    const disconnect = () => { if (!res.writableFinished) controller.abort(); };
     req.on("aborted", disconnect);
     res.on("close", disconnect);
     const duration = Number(timeoutMs);
@@ -83,7 +85,8 @@ export function createLamaProxy({ apiUrl, username, apiKey, timeoutMs = 180000 }
       else res.end();
     } catch {
       // Never log or return fetch options, credentials or raw transport errors.
-      if (!res.destroyed) reply(res, controller.signal.reason?.name === "TimeoutError" ? 504 : 502, "LAMA_CONNECTION_FAILED");
+      const timedOut = controller.signal.reason?.name === "TimeoutError";
+      if (!res.destroyed) reply(res, timedOut ? 504 : 502, timedOut ? "LAMA_REQUEST_TIMEOUT" : "LAMA_CONNECTION_FAILED");
     } finally {
       clearTimeout(timer); req.off("aborted", disconnect); res.off("close", disconnect);
       controller.signal.removeEventListener("abort", abortUpload);

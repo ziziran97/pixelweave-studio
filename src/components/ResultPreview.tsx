@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Scan, ZoomIn, ZoomOut } from "lucide-react";
+import { Focus, Scan, ZoomIn, ZoomOut } from "lucide-react";
 import type { DocumentSize, PendingResult } from "../types";
 
 type Camera = { zoom: number | null; x: number; y: number };
 
-export function ResultPreview({ result, size, busy, suspended = false, accept, discard }: {
-  result: PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean; accept: () => void; discard: () => void;
+export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview }: {
+  result: PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean; accept: () => void; discard: () => void; retryPreview: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const panes = useRef<Array<HTMLDivElement | null>>([]);
@@ -25,7 +25,7 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
   const fitZoom = Math.min(1, bounds.width / size.width, bounds.height / size.height);
   const minZoom = Math.min(.03, fitZoom), maxZoom = 4;
   const zoom = camera.zoom ?? fitZoom;
-  const ready = loaded.every(Boolean) && !loadError && bounds.width > 1;
+  const ready = !!result.beforeUrl && !!result.afterUrl && loaded.every(Boolean) && !loadError && !result.previewError && !result.previewPreparing && bounds.width > 1;
 
   // One camera in image coordinates keeps both views aligned at every zoom level.
   const constrain = (value: Camera, scale: number) => {
@@ -51,6 +51,17 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
   const fit = () => {
     drag.current = null;
     setCamera({ zoom: null, x: size.width / 2, y: size.height / 2 });
+  };
+  const focusRegion = () => {
+    const region = result.region;
+    if (!region || !ready || busy) return;
+    // Context is for inspection only; it never expands the submitted Mask.
+    const padding = Math.max(24, Math.max(region.width, region.height) * .2);
+    const left = Math.max(0, region.x - padding), top = Math.max(0, region.y - padding);
+    const right = Math.min(size.width, region.x + region.width + padding), bottom = Math.min(size.height, region.y + region.height + padding);
+    const scale = Math.max(minZoom, Math.min(maxZoom, bounds.width / (right - left), bounds.height / (bottom - top)));
+    drag.current = null;
+    setCamera(constrain({ zoom: scale, x: (left + right) / 2, y: (top + bottom) / 2 }, scale));
   };
 
   useEffect(() => { if (!suspended && !dialog.current?.open) dialog.current?.showModal(); }, [suspended]);
@@ -90,6 +101,7 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
     <div className="result-view-tools">
       <span>滚轮缩放，拖动查看；两侧同步</span>
       <div role="group" aria-label="结果查看">
+        <button disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" title="定位本轮选区及周边，左右同步" onClick={focusRegion}><Focus size={16} />消除区域</button>
         <button aria-label="缩小对比图片" title="缩小" disabled={busy || !ready || zoom <= minZoom} onClick={() => changeZoom(1 / 1.25)}><ZoomOut size={16} /></button>
         <output aria-label="对比缩放比例">{ready ? `${Math.round(zoom * 100)}%` : "—"}</output>
         <button aria-label="放大对比图片" title="放大" disabled={busy || !ready || zoom >= maxZoom} onClick={() => changeZoom(1.25)}><ZoomIn size={16} /></button>
@@ -97,7 +109,7 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
         <button disabled={busy || !ready} aria-label="适配对比图片" onClick={fit}><Scan size={16} />适配</button>
       </div>
     </div>
-    <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={url}>
+    <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={index}>
       <figcaption>{index === 0 ? "消除前" : "消除后"}</figcaption>
       <div ref={element => { panes.current[index] = element; }} className="result-viewport" tabIndex={0}
         aria-label={index === 0 ? "消除前对比视图" : "消除后对比视图"}
@@ -128,14 +140,17 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
             return constrain({ ...current, x: center.x + offset[0] / scale, y: center.y + offset[1] / scale }, scale);
           });
         }}>
-        <img key={loadAttempt} src={url} draggable={false} alt={index === 0 ? "本次消除前的图片" : "待采用的消除结果"}
+        {url && <img key={`${url}-${loadAttempt}`} src={url} draggable={false} alt={index === 0 ? "本次消除前的图片" : "待采用的消除结果"}
           style={{ width: size.width * zoom, height: size.height * zoom,
             transform: `translate(${bounds.width / 2 - position.x * zoom}px, ${bounds.height / 2 - position.y * zoom}px)` }}
           onLoad={() => { if (loadAttempt === loadGeneration.current) setLoaded(previous => previous.map((value, i) => i === index || value)); }}
-          onError={() => { if (loadAttempt === loadGeneration.current) setLoadError(true); }} />
+          onError={() => { if (loadAttempt === loadGeneration.current) setLoadError(true); }} />}
       </div>
     </figure>)}</div>
-    {loadError ? <div className="result-recovery">
+    {result.previewError ? <div className="result-recovery">
+      <p role={result.previewPreparing ? "status" : "alert"}>{result.previewPreparing ? "正在生成对比预览，消除结果已保留…" : result.previewError}</p>
+      <button className="secondary-button" disabled={busy || result.previewPreparing} onClick={retryPreview}>重新生成预览</button>
+    </div> : loadError ? <div className="result-recovery">
       <p role="alert">对比图片加载失败，消除结果已保留。</p>
       <button className="secondary-button" disabled={busy} onClick={reloadPreview}>重新加载预览</button>
     </div> : !ready && <p role="status">正在加载对比图片…</p>}

@@ -180,7 +180,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
     </main>
     <input ref={fileRef} type="file" accept=".jpg,.jpeg" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
     {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} previewOnly={previewOnly} />}
-    {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} />}
+    {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} retryPreview={() => void engine?.retryResultPreview()} />}
     {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
     {helpOpen && <ShortcutHelp close={() => setHelpOpen(false)} />}
   </div>;

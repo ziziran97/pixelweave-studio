@@ -98,7 +98,7 @@ try {
   try {
     let cancelled = false;
     const render = (pending: boolean) => root.render(createElement("div", null,
-      pending && createElement(ResultPreview, { result: { assetId: "test", beforeUrl: url, afterUrl: url, documentId: "test", revision: 0 }, size: { width: 512, height: 384 }, busy: false, suspended: !cancelled, accept: () => {}, discard: () => {} }),
+      pending && createElement(ResultPreview, { result: { assetId: "test", beforeUrl: url, afterUrl: url, documentId: "test", revision: 0 }, size: { width: 512, height: 384 }, busy: false, suspended: !cancelled, accept: () => {}, discard: () => {}, retryPreview: () => {} }),
       !cancelled && createElement(ConfirmationDialog, { confirmation: { id: "test", kind: "close" }, answer: () => { cancelled = true; render(true); } })));
     render(false); await paint(); render(true); await paint();
     check(!!dialog()?.open && !host.querySelector<HTMLDialogElement>(".result-dialog")!.open && document.activeElement === dialog().querySelector(".secondary-button"), "消除结果晚返回时不抢占当前确认弹窗");

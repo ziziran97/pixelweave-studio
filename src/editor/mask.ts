@@ -1,4 +1,4 @@
-import type { DocumentSize, MaskStroke } from "../types";
+import type { DocumentSize, ImageRegion, MaskStroke } from "../types";
 
 export function paintStroke(ctx: CanvasRenderingContext2D, stroke: MaskStroke) {
   const points = stroke.points;
@@ -106,7 +106,7 @@ export function polygonHasArea(stroke: MaskStroke, zoom: number, size?: Document
     return hasCoverage(ctx, canvas.width, canvas.height, minimum);
   } finally { canvas.width = canvas.height = 0; }
 }
-export async function exportMask(strokes: MaskStroke[], size: DocumentSize, signal?: AbortSignal) {
+export async function exportMask(strokes: MaskStroke[], size: DocumentSize, signal?: AbortSignal, onBounds?: (bounds: ImageRegion) => void) {
   signal?.throwIfAborted();
   const canvas = document.createElement("canvas"); canvas.width = size.width; canvas.height = size.height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
@@ -118,15 +118,15 @@ export async function exportMask(strokes: MaskStroke[], size: DocumentSize, sign
     const worker = new Worker(new URL("./maskEncoder.worker.ts", import.meta.url), { type: "module" });
     let abort: (() => void) | undefined;
     try {
-      const result = await new Promise<Blob>((resolve, reject) => {
+      const result = await new Promise<{ blob: Blob; bounds?: ImageRegion }>((resolve, reject) => {
         abort = () => {
           worker.terminate();
           reject(signal?.reason ?? new DOMException("蒙版编码已取消", "AbortError"));
         };
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) { abort(); return; }
-        worker.onmessage = ({ data }: MessageEvent<{ blob?: Blob; error?: string }>) => {
-          if (data.blob instanceof Blob) resolve(data.blob);
+        worker.onmessage = ({ data }: MessageEvent<{ blob?: Blob; bounds?: ImageRegion; error?: string }>) => {
+          if (data.blob instanceof Blob) resolve({ blob: data.blob, bounds: data.bounds });
           else reject(new Error(data.error || "蒙版编码失败，请重试"));
         };
         worker.onerror = event => { event.preventDefault(); reject(new Error("蒙版编码失败，请重试")); };
@@ -134,7 +134,8 @@ export async function exportMask(strokes: MaskStroke[], size: DocumentSize, sign
         worker.postMessage({ pixels: pixels.data.buffer, ...size }, [pixels.data.buffer]);
       });
       signal?.throwIfAborted();
-      return result;
+      if (result.bounds) onBounds?.(result.bounds);
+      return result.blob;
     } finally {
       if (abort) signal?.removeEventListener("abort", abort);
       worker.onmessage = worker.onerror = worker.onmessageerror = null;

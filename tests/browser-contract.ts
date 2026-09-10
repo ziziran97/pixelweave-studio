@@ -7,6 +7,7 @@ import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
 import { checkSelectionInteractions } from "./selection-interactions";
 import { checkRequestLifecycle } from "./request-lifecycle";
+import { checkEraserRecovery } from "./eraser-recovery";
 import { checkRotation } from "./rotation";
 import { checkEditingTools, checkTextWorkspace, checkWorkspacePersistence } from "./editing-tools";
 import { checkReplacementFlow } from "./replacement-flow";
@@ -97,6 +98,7 @@ try {
   await checkGrayMasks(check);
   await checkMaskCancellation(check);
   await checkRequestLifecycle(check);
+  await checkEraserRecovery(check);
   await checkEditingTools(check);
   await checkDrawingRefinements(check);
   await checkDrawingTransforms(check);
