@@ -49,6 +49,12 @@ try {
   check(firstId === rows[1].dataset.layerId && detail()?.textContent?.includes("本图层违禁词：HiddenOnlyRestrictedTerm、hidden-ban") === true && !detail()?.textContent?.includes("ForbiddenWordExample"), "隐藏锁定问题在本图层显示对应词，不混入另一图层的检测结果");
   check(detail()?.textContent?.includes("显示并解锁后可编辑") === true && rows[0].classList.contains("selected"), "问题详情明确显示和解锁步骤，保持原有对象选择");
   check(detail()!.scrollWidth <= detail()!.clientWidth, "问题图层内的长词换行且不撑宽图层面板");
+  rows[0].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
+  check(!detail() && rows[0].classList.contains("selected"), "点击当前已选图层也结束旧问题详情查看，不要求先切到其他图层");
+  locate().click(); await paint();
+  check((document.activeElement as HTMLElement).dataset.layerId === rows[0].dataset.layerId && !detail(), "手动关闭详情不重置问题定位的循环顺序");
+  locate().click(); await paint();
+  check(!!detail() && rows[0].classList.contains("selected"), "再次定位隐藏锁定图层可重新查看对应词，并继续保留选择");
   locate().click(); await paint(); const secondId = (document.activeElement as HTMLElement).dataset.layerId;
   check(!!firstId && !!secondId && firstId !== secondId && host.querySelector('output')!.textContent === zoom, "查看问题图层循环定位多个问题并保留缩放");
   check(rows[1].textContent!.includes("已隐藏 · 已锁定"), "定位隐藏锁定问题不自动显示或解锁");
@@ -60,6 +66,9 @@ try {
   check(detail()?.textContent?.includes("选择此图层后可编辑") === true, "显示解锁后保留具体词并引导选择该图层");
   rows[1].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
   check(!detail() && host.querySelector('.text-validation-error')!.textContent!.includes("HiddenOnlyRestrictedTerm") && !host.querySelector('.text-validation-error')!.textContent!.includes("ForbiddenWordExample"), "选择问题图层后左侧接续显示该图层的词，右侧详情收起");
+  rows[0].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
+  check(!host.querySelector('.layer-problem-details') && host.querySelector('.text-validation-error')!.textContent!.includes("ForbiddenWordExample") && !host.querySelector('.text-validation-error')!.textContent!.includes("HiddenOnlyRestrictedTerm"), "普通切换图层只展示当前文字的违禁词，不重新展开上次定位的旧详情");
+  rows[1].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
   button("修改文字").click(); await paint(); await input("Updated copy");
   rows[1].querySelector<HTMLButtonElement>('.layer-select')!.click(); await paint();
   check(!rows[1].classList.contains("has-problem") && !detail() && !host.querySelector('.text-validation-error'), "修改问题文案后该图层的旧标记与具体词一起失效");

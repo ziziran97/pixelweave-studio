@@ -92,6 +92,8 @@ try {
 
   // Exercise the same production dialog and draft through the local-only scenario selector.
   root.render(createElement(App, { preview: true })); await waitFor(() => !!button("文字") && !button("文字").disabled);
+  const scenarioSelect = host.querySelector<HTMLSelectElement>(".preview-scenario select")!;
+  check(scenarioSelect.value === "success" && scenarioSelect.options[0].value === "success" && scenarioSelect.options[1].value === "texts", "不带参数默认完整成功流程，下拉框将其放在首位并保留单独文案检测");
   check(host.querySelector(".brand")!.getBoundingClientRect().right < host.querySelector(".top-actions")!.getBoundingClientRect().left, "演示场景入口为标题留出宽度，不与撤销等按钮重叠");
   await addText();
   const selectScenario = async (value: string) => {
@@ -100,7 +102,8 @@ try {
   };
   const layerBefore = host.querySelector('.layer-card[data-purpose="content"]')!.getAttribute("data-layer-id");
   for (const scenario of ["success", "no_progress", "image_blocked", "detection_failed", "unknown", "review_failed"]) {
-    await selectScenario(scenario); await start();
+    if (scenario !== "success") await selectScenario(scenario);
+    await start();
     check(dialog()!.textContent!.includes("演示 · 未保存到任务") && host.querySelector<HTMLSelectElement>(".preview-scenario select")!.disabled, `${scenario} 使用实际进度弹窗且明确标识模拟`);
     if (scenario === "image_blocked" || scenario === "detection_failed") {
       await waitFor(() => !dialog());

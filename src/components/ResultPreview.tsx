@@ -4,12 +4,23 @@ import type { DocumentSize, PendingResult } from "../types";
 import { ActionButton } from "./ActionButton";
 
 type Camera = { zoom: number | null; x: number; y: number };
-
-export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview, onPreviewState }: {
-  result: PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean; accept: () => void; discard: () => void; retryPreview: () => void;
+type PreviewImages = Pick<PendingResult, "beforeUrl" | "afterUrl" | "region" | "previewError" | "previewPreparing" | "acceptError" | "illustrative">;
+type ResultPreviewProps = {
+  result: PreviewImages | PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean;
+} & ({
+  example: true; closeExample: () => void;
+  accept?: never; discard?: never; retryPreview?: never; onPreviewState?: never;
+} | {
+  example?: false; closeExample?: never;
+  accept: () => void; discard: () => void; retryPreview: () => void;
   onPreviewState?: (outcome: "shown" | "failed", loadAttempt: number) => void;
-}) {
+});
+
+export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview, onPreviewState, example: requestedExample = false, closeExample }: ResultPreviewProps) {
+  const example = (import.meta.env.DEV || import.meta.env.MODE === "demo") && requestedExample;
+  const illustrative = (import.meta.env.DEV || import.meta.env.MODE === "demo") && result.illustrative;
   const dialog = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const panes = useRef<Array<HTMLDivElement | null>>([]);
   const drag = useRef<{ id: number; x: number; y: number } | null>(null);
   const [bounds, setBounds] = useState({ width: 1, height: 1 });
@@ -71,7 +82,10 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
     setCamera(constrain({ zoom: scale, x: (left + right) / 2, y: (top + bottom) / 2 }, scale));
   };
 
-  useEffect(() => { if (!suspended && !dialog.current?.open) dialog.current?.showModal(); }, [suspended]);
+  useEffect(() => {
+    if (!suspended && !dialog.current?.open) { dialog.current?.showModal(); if (example) closeButton.current?.focus(); }
+  }, [suspended, example]);
+  const dismissExample = () => { dialog.current?.close(); closeExample?.(); };
   useEffect(() => {
     const observer = new ResizeObserver(() => {
       const elements = panes.current.filter((pane): pane is HTMLDivElement => !!pane);
@@ -102,9 +116,9 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
 
   return <dialog ref={dialog} className="result-dialog" aria-labelledby="result-title"
     onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}
-    onCancel={event => event.preventDefault()}>
+    onCancel={event => { event.preventDefault(); if (example) dismissExample(); }}>
     <h2 id="result-title">检查消除结果</h2>
-    <p>使用后可继续编辑，点击右上角“替换图片”才会保存到任务。</p>
+    <p>{example ? "固定样例 · 效果示意，未调用消除服务。" : illustrative ? "固定样图流程演示 · 未调用消除服务。使用后更新当前编辑草稿，未保存到任务。" : "使用后可继续编辑，点击右上角“替换图片”才会保存到任务。"}</p>
     <div className="result-view-tools">
       <span>滚轮缩放，拖动查看；两侧同步</span>
       <div role="group" aria-label="结果查看">
@@ -114,7 +128,7 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
         <ActionButton className="actual-size" disabled={busy || !ready} aria-label="100% 查看对比图片" hint="以 100% 比例查看图片细节" onClick={() => changeZoom("actual")}>100%</ActionButton>
         <ActionButton disabled={busy || !ready} aria-label="适配对比图片" hint="完整显示图片并居中" onClick={fit}><ScanSquare /></ActionButton>
         <span className="result-region-divider" aria-hidden="true" />
-        <ActionButton disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" hint="定位本轮选区及周边，左右同步" onClick={focusRegion}><Crosshair />消除区域</ActionButton>
+        <ActionButton disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" hint={example ? "定位示例中标签的移除区域及周边，左右同步" : "定位本轮选区及周边，左右同步"} onClick={focusRegion}><Crosshair />消除区域</ActionButton>
       </div>
     </div>
     <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={index}>
@@ -148,7 +162,7 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
             return constrain({ ...current, x: center.x + offset[0] / scale, y: center.y + offset[1] / scale }, scale);
           });
         }}>
-        {url && <img key={`${url}-${loadAttempt}`} src={url} draggable={false} alt={index === 0 ? "本次消除前的图片" : "待采用的消除结果"}
+        {url && <img key={`${url}-${loadAttempt}`} src={url} draggable={false} alt={example ? (index === 0 ? "含橙色标签的示意图" : "移除标签后的示意图") : (index === 0 ? "本次消除前的图片" : "待采用的消除结果")}
           style={{ width: size.width * zoom, height: size.height * zoom,
             transform: `translate(${bounds.width / 2 - position.x * zoom}px, ${bounds.height / 2 - position.y * zoom}px)` }}
           onLoad={() => { if (loadAttempt === loadGeneration.current) setLoaded(previous => previous.map((value, i) => i === index || value)); }}
@@ -159,14 +173,17 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
       <p role={result.previewPreparing ? "status" : "alert"}>{result.previewPreparing ? "正在生成对比预览，消除结果已保留…" : result.previewError}</p>
       <button className="secondary-button" disabled={busy || result.previewPreparing} onClick={retryPreview}>重新生成预览</button>
     </div> : loadError ? <div className="result-recovery">
-      <p role="alert">对比图片加载失败，消除结果已保留。</p>
+      <p role="alert">{example ? "示例图片加载失败，可重新加载或关闭示例。" : "对比图片加载失败，消除结果已保留。"}</p>
       <button className="secondary-button" disabled={busy} onClick={reloadPreview}>重新加载预览</button>
     </div> : !ready && <p role="status">正在加载对比图片…</p>}
     {result.acceptError && <p className="result-error" role="alert">{result.acceptError}</p>}
     <div className="result-footer">
+      {example ? <><p>示例仅供查看，不会修改当前图片或选区。</p>
+        <div className="dialog-actions"><button ref={closeButton} className="primary-button" onClick={dismissExample}>关闭示例</button></div></> : <>
       <p>使用后清空本轮选区；放弃则保留选区。</p>
       <div className="dialog-actions"><button className="secondary-button" disabled={busy} onClick={discard}>放弃结果</button>
         <button className="primary-button" disabled={busy || !ready} onClick={accept}>{busy ? "正在使用…" : result.acceptError ? "重试使用结果" : "使用消除结果"}</button></div>
+      </>}
     </div>
   </dialog>;
 }

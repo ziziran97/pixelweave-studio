@@ -113,6 +113,7 @@ export type EraseStage = "preparing" | "waiting" | "preview";
 export type PendingResult = {
   assetId: string; beforeUrl: string; afterUrl: string;
   documentId: string; revision: number;
+  illustrative?: boolean;
   acceptError?: string;
   previewError?: string; previewPreparing?: boolean; region?: ImageRegion;
 };
@@ -124,6 +125,7 @@ export type EditorView = {
   confirmation?: EditorConfirmation;
   ready: boolean; busy: boolean; task: boolean; notice: string;
   eraseStage?: EraseStage; eraseStageStartedAt?: number;
+  canSelectEraseExample?: boolean;
   noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
   tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";
   workspace: WorkspaceId; drawingTool: "draw" | "rect" | "circle"; propertiesRequest: number;

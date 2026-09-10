@@ -24,7 +24,14 @@ export class Assets {
 export function toBlob(canvas: HTMLCanvasElement, type = "image/png", quality?: number) {
   return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片导出失败")), type, quality));
 }
-export async function defaultImage() {
+export async function defaultImage(preview = false) {
+  if ((import.meta.env.DEV || import.meta.env.MODE === "demo") && preview) {
+    // Reuse only the BEFORE image; the comparison module remains on demand.
+    const { default: url } = await import("../../docs/demo/eraser/before-2910x1800.png");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("默认图片无法加载");
+    return response.blob();
+  }
   const canvas = document.createElement("canvas"); canvas.width = 1280; canvas.height = 800;
   const ctx = canvas.getContext("2d")!;
   const gradient = ctx.createLinearGradient(0, 0, 1280, 800);

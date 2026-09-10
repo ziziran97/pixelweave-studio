@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), ...(mode === "production-test" ? [{ name: "local-lama-production-test",
       configureServer: install, configurePreviewServer: install }] : [])],
-    server: { port: 4175 },
+    server: { host: "127.0.0.1", port: 4180, strictPort: true },
+    preview: { host: "127.0.0.1", port: 4180, strictPort: true },
   };
 });

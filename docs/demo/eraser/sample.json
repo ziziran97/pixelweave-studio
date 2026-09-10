@@ -1,0 +1,16 @@
+{
+  "kind": "illustrative",
+  "label": "固定样例 · 效果示意，未调用消除服务",
+  "before": "before-2910x1800.png",
+  "after": "after-2910x1800.png",
+  "size": {
+    "width": 2910,
+    "height": 1800
+  },
+  "region": {
+    "x": 1899,
+    "y": 1374,
+    "width": 891,
+    "height": 351
+  }
+}
