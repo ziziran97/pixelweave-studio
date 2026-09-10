@@ -124,6 +124,7 @@ try {
   const zoom = host.querySelector("output")!.textContent;
   host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click();
   await settle(() => !!host.querySelector<HTMLDialogElement>(".confirmation-dialog")?.open);
+  await settle(() => host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")?.disabled === false);
   host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")!.click();
   await settle(() => !!host.querySelector(".has-problem"));
   check(!!button("展开图层") && saves === 0, "校验失败不自动展开面板，不调用保存");

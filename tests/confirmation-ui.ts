@@ -41,7 +41,17 @@ try {
   check(!dialog() && replacements === 0, "Esc 对应取消，不提交或关闭编辑器");
   await start(); button("取消并关闭弹窗").click(); await paint();
   check(!dialog() && replacements === 0, "右上角关闭确认弹窗等同取消");
-  await start(); const accept = dialog().querySelector<HTMLButtonElement>(".primary-button")!;
+  await start(); await settle(() => !dialog()?.querySelector<HTMLButtonElement>(".primary-button")?.disabled);
+  check(!!dialog().querySelector<HTMLImageElement>('img')?.naturalWidth, "最终成图加载后才允许确认替换");
+  const previewImage = dialog().querySelector<HTMLImageElement>('.replacement-preview img')!, previewBox = previewImage.parentElement!;
+  check(previewImage.clientWidth <= previewBox.clientWidth && previewImage.clientHeight <= previewBox.clientHeight && getComputedStyle(previewImage).objectFit === "contain", "最终成图完整适配预览区，不因原尺寸撑开而裁切");
+  previewImage.dispatchEvent(new Event("error")); await paint();
+  check(dialog().querySelector<HTMLButtonElement>('.primary-button')!.disabled && validations === 0 && replacements === 0, "预览加载失败时保留返回编辑入口并禁止确认");
+  dialog().querySelector<HTMLButtonElement>('.replacement-preview button')!.click();
+  await settle(() => !dialog().querySelector<HTMLButtonElement>('.primary-button')!.disabled);
+  previewImage.dispatchEvent(new Event("error")); await paint();
+  check(!dialog().querySelector<HTMLButtonElement>('.primary-button')!.disabled && dialog().querySelector('img') !== previewImage, "重新生成后旧图片的加载事件不覆盖新预览");
+  const accept = dialog().querySelector<HTMLButtonElement>(".primary-button")!;
   accept.click(); accept.click();
   await settle(() => replacements === 1 && !submit().disabled);
   check(validations === 1 && replacements === 1 && !dialog(), "连续确认只执行一次检测和保存，失败回到可编辑草稿");

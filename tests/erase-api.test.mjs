@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../src/lib/eraseApi.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { callEraseApi } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const { callEraseApi, eraseFailureCode } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 const input = (signal = new AbortController().signal) => ({
   apiUrl: "/business/erase", image: new Blob(["jpeg"], { type: "image/jpeg" }),
   mask: new Blob(["png"], { type: "image/png" }), width: 128, height: 96,
@@ -104,6 +104,36 @@ test("existing JSON data URL result remains supported", async t => {
 test("malformed successful JSON has a readable response error", async t => {
   t.mock.method(globalThis, "fetch", async () => new Response("{", { headers: { "content-type": "application/json" } }));
   await assert.rejects(callEraseApi(input()), { message: "消除服务返回的数据无效，请稍后重试" });
+});
+
+test("telemetry request identity and allowlisted response metadata preserve the Blob contract", async t => {
+  let details;
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    assert.equal(JSON.parse(options.body.get("metadata")).requestId, "request-test");
+    assert.equal(options.headers, undefined);
+    return new Response(new Blob(["result"], { type: "image/jpeg" }), { headers: {
+      "x-request-id": "server-test", "x-algorithm-version": "lama-v2", "x-queue-wait-ms": "0",
+      "x-inference-ms": "12.5", "x-total-ms": "NaN", "authorization": "private" } });
+  });
+  const blob = await callEraseApi({ ...input(), requestId: "request-test", onResponse: value => { details = value; } });
+  assert.equal(await blob.text(), "result");
+  assert.deepEqual(details, { httpStatus: 200, serverRequestId: "server-test", algorithmVersion: "lama-v2", queueWaitMs: 0, inferenceMs: 12.5 });
+});
+test("observer failure cannot break erasing; failure categories never contain raw details", async t => {
+  t.mock.method(globalThis, "fetch", async () => new Response(new Blob(["result"], { type: "image/jpeg" })));
+  const blob = await callEraseApi({ ...input(), onResponse: () => { throw new Error("observer"); } });
+  assert.equal(await blob.text(), "result");
+  assert.equal(eraseFailureCode(new Error("private source URL and token")), "REQUEST_FAILED");
+  assert.equal(eraseFailureCode(new Error("排队等待超时，请稍后重试")), "QUEUE_TIMEOUT");
+});
+
+test("malformed diagnostic headers are omitted, including URLs and invalid timings", async t => {
+  let details;
+  t.mock.method(globalThis, "fetch", async () => new Response(new Blob(["result"], { type: "image/jpeg" }), { headers: {
+    "x-algorithm-version": "https://private.example/image.jpg", "x-request-id": "unexpected identifier",
+    "x-total-ms": "-1", "x-queue-wait-ms": "", "x-inference-ms": "Infinity" } }));
+  await callEraseApi({ ...input(), onResponse: value => { details = value; } });
+  assert.deepEqual(details, { httpStatus: 200 });
 });
 
 for (const body of [{}, { image: "data:image/png;base64,not-valid-@" }, { url: "http://[invalid" }, { url: "file:///private.jpg" }]) {

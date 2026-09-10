@@ -1,7 +1,9 @@
-import { ActiveSelection, Canvas, Ellipse, FabricImage, Path, Point, Rect, Textbox } from "fabric";
+import { ActiveSelection, Ellipse, FabricImage, Path, Point, Rect, Textbox } from "fabric";
 import type { FabricObject, TPointerEventInfo } from "fabric";
 import { editorConfig } from "../config";
-import { callEraseApi } from "../lib/eraseApi";
+import { callEraseApi, eraseFailureCode } from "../lib/eraseApi";
+import { EraseTelemetry } from "../telemetry";
+import type { EraseExitReason, EraseTelemetryRun } from "../telemetry";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
 import type { DocumentSnapshot, EditorView, EraseMode, EraseStage, ImageAdjustments, ImageRegion, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
@@ -21,6 +23,10 @@ import { applyShapeProperties, shapeProperties, rectRadiusLimit, syncRectRadius,
 import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } from "../integration";
 import { textCheckIssues } from "../integration";
 import { validatePreviewTexts } from "./previewTextValidation";
+import { previewReplacement } from "./previewReplacement";
+import type { PreviewReplacementScenario } from "./previewReplacement";
+import { readReplacementProgress } from "./submissionProgress";
+import type { SubmissionProgress } from "./submissionProgress";
 import type { ConfirmationKind, EditorConfirmation, WorkspaceId } from "../types";
 
 function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
@@ -35,7 +41,7 @@ const POSITION_KEYS: Record<string, readonly [number, number]> = {
 };
 
 export class EditorController {
-  readonly canvas: Canvas;
+  readonly canvas: DrawingCanvas;
   private assets = new Assets();
   private history = new History();
   private original?: DocumentSnapshot;
@@ -43,16 +49,21 @@ export class EditorController {
   private selection = new SelectionGesture();
   private adjustments = { ...DEFAULT_ADJUSTMENTS };
   private documentId = uid("document");
+  private imageSessionId = uid("image-session");
   private revision = 0;
   private generation = 0;
   private disposed = false;
   private ready = false;
   private busy = false;
   private job?: { id: string; controller: AbortController; stage: EraseStage; startedAt: number };
+  private telemetry: EraseTelemetry;
+  private eraseRun?: EraseTelemetryRun;
+  private erasePreviewAttempt = 0;
   private processingAssets = new Map<string, Set<string>>();
   private pending?: PendingResult;
   private confirmation?: EditorConfirmation;
   private confirmationResolve?: (accepted: boolean) => void;
+  private replacementPreview?: { id: string; attempt: number; snapshot: DocumentSnapshot; image?: Blob };
   private compareOriginal = false;
   private editingViewport?: number[];
   private editingFitted?: boolean;
@@ -79,6 +90,7 @@ export class EditorController {
   private shapeDraft?: { object: Rect | Ellipse; tool: "rect" | "circle"; start: PointData; screenStart: PointData };
   private shapeDefaults = { ...DEFAULT_SHAPE };
   private textDefaults = { ...DEFAULT_TEXT };
+  private automaticTextSize = true;
   private lastTextAdd?: { id: string; generation: number; at: number };
   private emptyTexts = new Set<Textbox>();
   private textComposition?: Textbox;
@@ -93,6 +105,9 @@ export class EditorController {
   private preparingColorPick?: () => void;
   private submitting = false;
   private submissionStage = "";
+  private submissionProgress?: SubmissionProgress;
+  private previewScenario: PreviewReplacementScenario = "texts";
+  private previewSubmission?: { scenario: PreviewReplacementScenario; controller: AbortController; reviewAttempts: number };
   private submission?: ReplacementInput;
   private submissionRun = 0;
   private needsConfirmation = false;
@@ -116,6 +131,9 @@ export class EditorController {
   private previewFrame = 0;
 
   constructor(element: HTMLCanvasElement, private overlay: HTMLCanvasElement, private viewport: HTMLElement, private onChange: (view: EditorView) => void, private integration?: EditorIntegration, private preview = false) {
+    this.telemetry = new EraseTelemetry(integration?.telemetry?.environment ??
+      (import.meta.env.MODE === "production-test" ? "local-test" : import.meta.env.DEV ? "development" : import.meta.env.MODE === "demo" ? "demo" : "production"),
+      integration?.telemetry ? event => integration.telemetry!.onEvent(event) : undefined, import.meta.env.DEV);
     this.canvas = new DrawingCanvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false, targetFindTolerance: 4,
       preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
     this.canvas.on("selection:created", () => this.selectionChanged());
@@ -201,10 +219,11 @@ export class EditorController {
     window.addEventListener("pointerup", this.windowPointerUp, true);
     window.addEventListener("pointercancel", this.windowPointerCancel, true);
     window.addEventListener("beforeunload", this.beforeUnload);
+    window.addEventListener("pagehide", this.pageHide);
     this.configure(); this.emit();
   }
 
-  private get locked() { return !this.ready || !!this.confirmation || this.busy || !!this.job || !!this.pending || this.compareOriginal || !!this.colorPick || !!this.colorEdit || this.submitting || !!this.savedRecord || this.closed; }
+  private get locked() { return !this.ready || !!this.confirmation || this.busy || !!this.job || !!this.pending || this.compareOriginal || this.canvas.beforeAdjustments || !!this.colorPick || !!this.colorEdit || this.submitting || !!this.savedRecord || this.closed; }
   private get dirty() { return !!this.original && JSON.stringify(this.snapshot()) !== JSON.stringify(this.original); }
   private get contentDirty() {
     if (!this.original) return false;
@@ -278,9 +297,11 @@ export class EditorController {
       shapeKind: single instanceof Rect ? "rect" : single instanceof Ellipse ? "circle" : this.workspace === "draw" && this.lastDrawingTool !== "draw" ? this.lastDrawingTool : undefined,
       drawing: single instanceof Path ? { color: String(single.stroke ?? this.color), width: single.strokeWidth } : undefined,
       picking: !!this.colorPick, colorEditing: !!this.colorEdit, submitting: this.submitting, submissionStage: this.submissionStage,
+      submissionProgress: this.submissionProgress ? { ...this.submissionProgress } : undefined,
+      previewScenario: this.preview && previewReplacement && !this.integration ? this.previewScenario : undefined,
       needsConfirmation: this.needsConfirmation, saved: !!this.savedRecord, closed: this.closed,
       canSubmit: !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft && this.contentDirty,
-      canUpload: this.ready && !this.confirmation && !this.busy && !this.submitting && !this.savedRecord && !this.closed && !this.colorPick && !this.colorEdit && !this.drawingInProgress,
+      canUpload: this.ready && !this.confirmation && !this.busy && !this.submitting && !this.savedRecord && !this.closed && !this.colorPick && !this.colorEdit && !this.drawingInProgress && !this.canvas.beforeAdjustments,
       confirmation: this.confirmation,
       problemObjectId: problems[0]?.id ?? this.problemObjectId,
       problemObjectIds: problems.length ? problems.map(item => item.id) : this.problemObjectId ? [this.problemObjectId] : [],
@@ -290,7 +311,7 @@ export class EditorController {
       unfinishedSelection: !!this.selection.draft || !!this.shapeDraft || this.drawingInProgress,
       canUndo: !this.locked && (!!this.selection.draft || !!this.shapeDraft || this.propertyEdit || this.history.canUndo),
       canRedo: !this.locked && !this.selection.draft && !this.shapeDraft && !this.propertyEdit && this.history.canRedo, dirty: this.ready && this.dirty,
-      adjustments: { ...this.adjustments }, pending: this.pending, compareOriginal: this.compareOriginal,
+      adjustments: { ...this.adjustments }, pending: this.pending, compareOriginal: this.compareOriginal, compareAdjustments: this.canvas.beforeAdjustments,
       originalUrl: this.original?.objects[0]?.editorAssetId ? this.assets.get(this.original.objects[0].editorAssetId).url : undefined,
     };
     this.onChange(view); this.scheduleOverlay();
@@ -335,7 +356,7 @@ export class EditorController {
   async openImage(blob: Blob, name: string, confirm = true) {
     if (this.disposed || this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord) return;
     if (confirm && (this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("switch")) return;
-    this.cancelTask(); this.discardResult(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
+    this.cancelTask("image_change"); this.discardResult("image_change"); this.compareOriginal = false; this.canvas.beforeAdjustments = false; this.editingViewport = undefined; this.editingFitted = undefined;
     this.finishText(); this.cancelDraft();
     const token = ++this.generation;
     this.busy = true; this.configure(); this.notice = "正在打开图片…"; this.emit();
@@ -347,7 +368,7 @@ export class EditorController {
       await this.loadSnapshot(snapshot, token);
       if (this.disposed || token !== this.generation) return;
       this.original = deepCopy(snapshot); this.history.reset(this.snapshot()); this.original = deepCopy(this.history.current);
-      this.documentId = uid("document"); this.revision = 0; this.ready = true; this.closed = false; this.source = "online"; this.nameCounts = {};
+      this.documentId = uid("document"); this.imageSessionId = uid("image-session"); this.revision = 0; this.ready = true; this.closed = false; this.source = "online"; this.nameCounts = {};
       this.originalElement = new Image(); this.originalElement.src = asset.url;
       await this.originalElement.decode();
       this.notice = "图片已就绪，可以开始编辑";
@@ -364,6 +385,7 @@ export class EditorController {
       const objects = surface.getObjects(); surface.remove(...objects);
       this.canvas.discardActiveObject(); this.canvas.remove(...this.canvas.getObjects());
       this.size = { ...snapshot.size }; this.restoreMasks(snapshot); this.source = snapshot.source ?? "online";
+      if (this.automaticTextSize) this.textDefaults.fontSize = this.initialTextSize();
       this.adjustments = { ...snapshot.adjustments };
       objects.forEach(object => object.set({ selectable: object.editorPurpose !== "base" && !object.editorLocked, evented: object.editorPurpose !== "base" && !object.editorLocked }));
       this.canvas.add(...objects);
@@ -420,6 +442,7 @@ export class EditorController {
   setCompare(value: boolean) {
     if (this.disposed || value === this.compareOriginal) return;
     if (value) {
+      if (this.canvas.beforeAdjustments) return;
       if (this.confirmation || this.busy || this.job || this.pending || !this.ready || this.selection.draft || this.shapeDraft || this.drawingInProgress || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit) return;
       this.finishText(); this.cancelDraft();
       this.editingViewport = [...this.canvas.viewportTransform]; this.editingFitted = this.fitted;
@@ -432,6 +455,17 @@ export class EditorController {
       this.fitted = this.editingFitted ?? this.fitted;
       this.editingViewport = undefined; this.editingFitted = undefined;
     }
+    this.configure(); this.emit();
+  }
+
+  setCompareAdjustments(value: boolean) {
+    if (this.disposed || value === this.canvas.beforeAdjustments) return;
+    if (value) {
+      if (this.locked || this.workspace !== "adjust" || this.gestureActive || this.selection.draft || this.shapeDraft ||
+        !adjustmentFilters(this.adjustments).length) return;
+      this.finishPropertyEdit(); this.finishText();
+    }
+    this.canvas.beforeAdjustments = value;
     this.configure(); this.emit();
   }
 
@@ -663,7 +697,7 @@ export class EditorController {
     lens.querySelector("span")!.textContent = "#" + [...data.slice(0, 3)].map(value => value.toString(16).padStart(2, "0")).join("").toUpperCase();
   }
   async uploadReplacement(file: File) {
-    if (!this.ready || this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit || this.drawingInProgress) return;
+    if (!this.ready || this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit || this.drawingInProgress || this.canvas.beforeAdjustments) return;
     if ((this.dirty || this.job || this.pending || this.selection.draft || this.shapeDraft) && !await this.confirmAction("upload")) return;
     this.busy = true; this.configure(); this.notice = "正在校验并载入图片…"; this.emit();
     const token = this.generation;
@@ -676,8 +710,9 @@ export class EditorController {
       // loadSnapshot prepares all objects offscreen; a failed upload leaves the draft intact.
       await this.loadSnapshot(next, token);
       if (this.disposed || token !== this.generation) return;
-      this.cancelTask(); this.discardResult(); this.cancelDraft(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
+      this.cancelTask("upload"); this.discardResult("upload"); this.cancelDraft(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
       this.generation++; this.revision++; this.history.reset(this.snapshot());
+      this.imageSessionId = uid("image-session");
       this.tool = "select"; this.notice = "图片已载入，可继续编辑；点击「替换图片」后保存到任务。"; this.fit();
       return true;
     } catch (error) { this.report(error); }
@@ -690,16 +725,37 @@ export class EditorController {
   private textIssueSummary(count: number) {
     return `${count} 个文字图层的文案需修改。`;
   }
+  setPreviewScenario(value: string) {
+    if (!this.preview || !previewReplacement || this.integration || this.locked) return;
+    this.previewScenario = previewReplacement.normalize(value); this.emit();
+  }
+  private reportReplacementProgress(value: unknown) {
+    if (!this.submissionProgress) return;
+    const progress = readReplacementProgress(value, this.submissionProgress.backendStage);
+    if (!progress) return;
+    this.submissionStage = progress.message;
+    if (progress.stage) this.submissionProgress = { ...this.submissionProgress,
+      step: progress.stage === "saving" ? "saving" : "image", backendStage: progress.stage };
+    this.emit();
+  }
   async submitReplacement() {
     if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || !this.contentDirty) return;
-    if (!await this.confirmAction("replace")) return;
+    const confirmed = await this.confirmAction("replace");
+    if (!confirmed || !confirmed.image) return;
     this.finishText(); this.commit();
     if (!this.contentDirty) { this.notice = "空文字已删除，当前图片无需替换"; this.emit(); return; }
     if (!this.integration && !(this.preview && validatePreviewTexts)) { this.notice = "替换服务尚未接入，当前草稿已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
     const generation = this.generation, revision = this.revision, texts = this.addedTexts(), run = ++this.submissionRun;
-    this.submitting = true; this.submissionStage = "正在检查新增文案…"; this.configure(); this.emit();
+    this.submitting = true; this.submissionStage = texts.length ? "正在检查新增文案…" : "正在检查成图…";
+    this.submissionProgress = { step: texts.length ? "texts" : "image", status: "processing", textsSkipped: !texts.length, waitStartedAt: Date.now() };
+    if (!this.integration && this.preview && previewReplacement && this.previewScenario !== "texts") {
+      this.previewSubmission = { scenario: this.previewScenario, controller: new AbortController(), reviewAttempts: 0 };
+    }
+    this.configure(); this.emit();
     const current = () => !this.disposed && generation === this.generation && revision === this.revision && run === this.submissionRun;
     try {
+      if (this.previewSubmission && previewReplacement) await previewReplacement.wait(600, this.previewSubmission.controller.signal);
+      if (!current()) return;
       if (texts.length) {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         const checked = await Promise.race([
@@ -723,32 +779,45 @@ export class EditorController {
           return;
         }
       }
-      if (!this.integration) {
-        this.submissionRun++; this.submitting = false; this.submissionStage = "";
+      if (!this.integration && !this.previewSubmission) {
+        this.submissionRun++; this.submitting = false; this.submissionStage = ""; this.submissionProgress = undefined;
         this.notice = texts.length ? "文案检测通过。当前为演示，未保存到任务。" : "当前为演示，未保存到任务。";
         this.noticePresentation = "persistent"; this.configure(); this.emit(); return;
       }
-      this.submissionStage = "正在合成并校验图片…"; this.emit();
-      const image = await renderDocument(this.snapshot(), this.assets, "final");
-      const checked = await validateJpeg(image);
+      this.submissionStage = "正在检查成图…"; this.submissionProgress = { ...this.submissionProgress!, step: "image" }; this.emit();
+      const checked = await validateJpeg(confirmed.image);
       if (!current()) return;
       if (checked.width !== this.size.width || checked.height !== this.size.height) throw new Error("合成图片尺寸异常，请重试");
+      if (this.previewSubmission && previewReplacement && !this.integration) {
+        const demo = this.previewSubmission;
+        this.submissionStage = "正在等待图片检测结果…"; this.emit();
+        const outcome = await previewReplacement.run(demo.scenario, progress => { if (current()) this.reportReplacementProgress(progress); }, demo.controller.signal);
+        if (!current()) return;
+        if (typeof outcome === "object") this.finishSubmissionFailure(outcome.message);
+        else if (outcome === "unknown") this.awaitReplacementConfirmation();
+        else await this.returnToReview();
+        return;
+      }
+      if (!this.integration) return;
       this.submission = { submissionId: uid("replacement"), context: { ...this.integration.context,
         baseRecordId: this.source === "online" ? this.integration.context.baseRecordId : undefined },
         image: checked.jpeg, ...this.size, source: this.source, texts };
-      this.submissionStage = "正在检测并替换图片…"; this.emit();
+      this.submissionStage = "正在等待图片检测与替换结果…"; this.emit();
     } catch (error) { if (current()) this.finishSubmissionFailure((error as Error).message || "提交前检查失败，请重试"); return; }
     // After dispatch, transport errors are unknown outcomes, never definitive failures.
+    let progressOpen = true;
     try {
       const result = await this.integration.replace(this.submission!, message => {
-        if (current() && this.submitting && !this.needsConfirmation) { this.submissionStage = message; this.emit(); }
+        if (progressOpen && current() && this.submitting && !this.needsConfirmation) this.reportReplacementProgress(message);
       });
+      progressOpen = false;
       if (current()) await this.handleReplacementResult(result);
-    } catch { if (current() && !this.savedRecord) this.awaitReplacementConfirmation(); }
+    } catch { progressOpen = false; if (current() && !this.savedRecord) this.awaitReplacementConfirmation(); }
   }
   private finishSubmissionFailure(message: string, objectId?: string) {
+    this.previewSubmission?.controller.abort(); this.previewSubmission = undefined;
     this.submissionRun++;
-    this.submitting = false; this.needsConfirmation = false; this.submission = undefined; this.submissionStage = "";
+    this.submitting = false; this.needsConfirmation = false; this.submission = undefined; this.submissionStage = ""; this.submissionProgress = undefined;
     this.configure();
     if (objectId) {
       const object = this.canvas.getObjects().find(item => item.editorId === objectId);
@@ -760,7 +829,9 @@ export class EditorController {
     this.notice = message; this.noticePresentation = "persistent"; this.emit();
   }
   private awaitReplacementConfirmation() {
-    this.needsConfirmation = true; this.submissionStage = "正在确认替换结果，请勿重复提交"; this.emit();
+    this.needsConfirmation = true; this.submissionStage = "暂未收到明确的替换结果，请先查询本次结果。";
+    if (this.submissionProgress) this.submissionProgress = { ...this.submissionProgress, status: "unknown" };
+    this.emit();
   }
   private async handleReplacementResult(result: ReplaceOutcome) {
     if (result?.status === "succeeded" && result.recordId) {
@@ -770,25 +841,66 @@ export class EditorController {
     else this.awaitReplacementConfirmation();
   }
   async confirmReplacement() {
+    if (this.needsConfirmation && this.previewSubmission && previewReplacement && !this.integration) {
+      const demo = this.previewSubmission, run = this.submissionRun;
+      this.needsConfirmation = false; this.submissionStage = "正在查询本次替换结果…";
+      this.submissionProgress = { ...this.submissionProgress!, status: "querying", waitStartedAt: Date.now() }; this.emit();
+      try {
+        await previewReplacement.wait(900, demo.controller.signal);
+        if (!this.disposed && this.previewSubmission === demo && this.submissionRun === run) await this.returnToReview();
+      } catch { /* Demo disposal cannot affect a later document. */ }
+      return;
+    }
     if (!this.needsConfirmation || !this.submission || !this.integration) return;
-    const submission = this.submission, generation = this.generation;
-    this.needsConfirmation = false; this.submissionStage = "正在确认替换结果…"; this.emit();
+    const submission = this.submission, generation = this.generation, run = this.submissionRun;
+    const current = () => !this.disposed && generation === this.generation && run === this.submissionRun && submission === this.submission;
+    this.needsConfirmation = false; this.submissionStage = "正在查询本次替换结果…";
+    this.submissionProgress = { ...this.submissionProgress!, status: "querying", waitStartedAt: Date.now() }; this.emit();
     try {
       const result = await this.integration.confirmResult(submission.submissionId, submission.context);
-      if (!this.disposed && generation === this.generation) await this.handleReplacementResult(result);
-    } catch { if (!this.disposed && generation === this.generation) this.awaitReplacementConfirmation(); }
+      if (current()) await this.handleReplacementResult(result);
+    } catch { if (current()) this.awaitReplacementConfirmation(); }
   }
   async returnToReview() {
+    if (this.previewSubmission && previewReplacement && !this.integration) {
+      if (this.disposed || this.busy || this.submissionProgress?.status === "preview_complete") return;
+      const demo = this.previewSubmission, run = this.submissionRun;
+      this.busy = true; this.needsConfirmation = false;
+      this.submissionProgress = { ...this.submissionProgress!, step: "review", status: "processing", waitStartedAt: Date.now() };
+      this.submissionStage = "正在演示返回审核…"; this.emit();
+      try {
+        await previewReplacement.wait(900, demo.controller.signal);
+        if (this.disposed || this.previewSubmission !== demo || run !== this.submissionRun) return;
+        if (demo.scenario === "review_failed" && demo.reviewAttempts++ === 0) {
+          this.submissionProgress = { ...this.submissionProgress, status: "review_failed" };
+          this.submissionStage = "演示：保存步骤已完成，审核图片暂未刷新。";
+        } else {
+          this.submissionProgress = { ...this.submissionProgress, status: "preview_complete" };
+          this.submissionStage = "完整流程已演示，未保存或替换任务图片。";
+        }
+      } catch { /* Only local demo timers are cancelled. */ }
+      finally { if (!this.disposed && this.previewSubmission === demo) { this.busy = false; this.emit(); } }
+      return;
+    }
     if (!this.savedRecord || !this.integration || this.busy || this.closed) return;
-    this.busy = true; this.submissionStage = "替换已成功，正在返回审核…"; this.emit();
+    this.busy = true; this.submissionStage = "图片已保存，正在返回审核…";
+    this.submissionProgress = { ...this.submissionProgress!, step: "review", status: "processing", waitStartedAt: Date.now() }; this.emit();
     try { await this.integration.onClose({ reason: "saved", recordId: this.savedRecord }); if (!this.disposed) this.closed = true; }
-    catch { if (!this.disposed) this.submissionStage = "图片已保存，审核页面刷新失败，请重新加载审核图片"; }
+    catch { if (!this.disposed) { this.submissionStage = "图片已保存，审核页面刷新失败，请重新加载审核图片";
+      this.submissionProgress = { ...this.submissionProgress!, status: "review_failed" }; } }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
+  }
+  finishPreviewSubmission() {
+    if (!this.previewSubmission || this.integration || this.submissionProgress?.status !== "preview_complete") return;
+    this.previewSubmission.controller.abort(); this.previewSubmission = undefined;
+    this.submissionRun++; this.submitting = false; this.needsConfirmation = false; this.submissionStage = ""; this.submissionProgress = undefined;
+    this.notice = "演示完成，未保存到任务。当前编辑草稿已保留，可继续编辑。"; this.noticePresentation = "persistent";
+    this.configure(); this.emit();
   }
   async requestClose() {
     if (this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord || this.closed) return;
     if ((this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("close")) return;
-    this.cancelTask(); this.discardResult(); this.cancelColorPick(); this.cancelDraft();
+    this.cancelTask("close"); this.discardResult("close"); this.cancelColorPick(); this.cancelDraft();
     this.generation++; this.closed = true; this.configure(); this.emit();
     try { await this.integration?.onClose({ reason: "discard" }); }
     catch { if (!this.disposed) { this.closed = false; this.notice = "返回审核失败，请重试"; this.configure(); this.emit(); } }
@@ -798,17 +910,48 @@ export class EditorController {
     this.finishText();
     const id = uid("confirmation"), generation = this.generation, revision = this.revision;
     this.confirmation = { id, kind };
+    if (kind === "replace") this.replacementPreview = { id, attempt: 0, snapshot: this.snapshot() };
     const decision = new Promise<boolean>(resolve => { this.confirmationResolve = resolve; });
     this.configure(); this.emit();
+    if (kind === "replace") void this.retryReplacementPreview(id);
     const accepted = await decision;
     if (this.confirmation?.id !== id) return false;
+    const image = this.replacementPreview?.image;
+    this.clearReplacementPreview();
     this.confirmation = undefined; this.confirmationResolve = undefined;
     this.configure(); this.emit();
-    return accepted && !this.disposed && generation === this.generation && revision === this.revision;
+    return accepted && !this.disposed && generation === this.generation && revision === this.revision ? { image } : false;
   }
   answerConfirmation(id: string, accepted: boolean) {
     if (this.confirmation?.id !== id || !this.confirmationResolve) return;
+    if (accepted && this.confirmation.kind === "replace" && (!this.replacementPreview?.image || this.confirmation.preview?.status !== "ready")) return;
     const resolve = this.confirmationResolve; this.confirmationResolve = undefined; resolve(accepted);
+  }
+  private clearReplacementPreview() {
+    if (this.confirmation?.preview?.url) URL.revokeObjectURL(this.confirmation.preview.url);
+    this.replacementPreview = undefined;
+  }
+  async retryReplacementPreview(id: string) {
+    const preview = this.replacementPreview;
+    if (!preview || preview.id !== id || this.confirmation?.id !== id || this.confirmation.preview?.status === "loading" || this.disposed) return;
+    if (this.confirmation.preview?.url) URL.revokeObjectURL(this.confirmation.preview.url);
+    preview.image = undefined;
+    const attempt = ++preview.attempt, generation = this.generation, revision = this.revision;
+    const current = () => !this.disposed && this.replacementPreview === preview && preview.attempt === attempt &&
+      this.confirmation?.id === id && generation === this.generation && revision === this.revision;
+    this.confirmation = { ...this.confirmation, preview: { status: "loading" } }; this.emit();
+    const pin = `${id}-${attempt}`; this.processingAssets.set(pin, assetIds(preview.snapshot));
+    try {
+      const image = await renderDocument(preview.snapshot, this.assets, "final");
+      if (!current()) return;
+      const checked = await validateJpeg(image);
+      if (!current()) return;
+      if (checked.width !== preview.snapshot.size.width || checked.height !== preview.snapshot.size.height) throw new Error("成图尺寸异常");
+      preview.image = checked.jpeg;
+      this.confirmation = { id, kind: "replace", preview: { status: "ready", url: URL.createObjectURL(checked.jpeg) } };
+    } catch {
+      if (current()) this.confirmation = { id, kind: "replace", preview: { status: "error", error: "成图预览生成失败，编辑内容已保留。请重试或返回编辑。" } };
+    } finally { this.processingAssets.delete(pin); this.collect(); if (current()) this.emit(); }
   }
   undoLassoPoint() {
     if (this.locked || this.selection.mode !== "lasso" || !this.selection.draft) return;
@@ -971,6 +1114,7 @@ export class EditorController {
     }
     const active = this.canvas.getActiveObject();
     const properties = active instanceof Textbox ? textProperties(active) : { ...this.textDefaults };
+    const inheritSize = active instanceof Textbox && (active.fontSize !== this.initialTextSize() || !this.automaticTextSize);
     this.finishPropertyEdit(); this.finishText(); this.cancelDraft(); this.tool = "text"; this.workspace = "text";
     this.fontRetry = undefined;
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
@@ -985,7 +1129,7 @@ export class EditorController {
       let area = visibleArea();
       if (!point && (area.right <= area.left || area.bottom <= area.top)) { this.fit(); area = visibleArea(); }
       const text = new ContentTextbox("Your text", { left: point?.x ?? 0, top: point?.y ?? 0, originX: "left", originY: "top",
-        width: Math.min(420, this.size.width * .42), fontSize: properties.fontSize, fontFamily: properties.fontFamily, fill: this.color,
+        width: this.size.width * .42, fontSize: properties.fontSize, fontFamily: properties.fontFamily, fill: this.color,
         splitByGrapheme: true, editorId: uid("text"), editorName: "文案", editorRole: "text", editorPurpose: "content" });
       applyTextProperties(text, properties);
       if (!point) {
@@ -995,6 +1139,7 @@ export class EditorController {
         text.setPositionByOrigin(new Point(center.x, center.y), "center", "center");
       }
       this.textDefaults = { ...properties };
+      if (inheritSize) this.automaticTextSize = false;
       this.canvas.add(text); this.canvas.setActiveObject(text);
       this.notice = `已添加文字，当前共 ${this.canvas.getObjects().filter(object => object instanceof Textbox).length} 段；可直接输入或拖动调整位置`;
       this.busy = false; this.configure(); this.commit(); text.enterEditing(); text.selectAll();
@@ -1138,23 +1283,26 @@ export class EditorController {
     } catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.commit(); } }
   }
-  async updateText(values: TextProperties) {
+  private initialTextSize() { return Math.max(8, Math.min(500, Math.round(Math.min(this.size.width, this.size.height) * .05))); }
+  async updateText(values: TextProperties, explicitSize = false) {
     if (this.locked) return;
     const text = this.canvas.getActiveObject();
-    if (!(text instanceof Textbox)) { if (this.workspace === "text" && !this.canvas.getActiveObjects().length) { this.textDefaults = { ...values }; this.emit(); } return; }
+    const changedSize = explicitSize || values.fontSize !== (text instanceof Textbox ? text.fontSize : this.textDefaults.fontSize);
+    const keepSize = () => { if (changedSize) this.automaticTextSize = false; };
+    if (!(text instanceof Textbox)) { if (this.workspace === "text" && !this.canvas.getActiveObjects().length) { this.textDefaults = { ...values }; keepSize(); this.emit(); } return; }
     if (text.editorLocked) return;
     this.finishText();
-    if (!this.canvas.getObjects().includes(text)) { this.textDefaults = { ...values }; this.emit(); return; }
+    if (!this.canvas.getObjects().includes(text)) { this.textDefaults = { ...values }; keepSize(); this.emit(); return; }
     if (this.fontRetry) this.notice = "";
     this.fontRetry = undefined; this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try {
       await ensureFont(values.fontFamily, values.fontWeight, values.fontStyle);
       if (!this.disposed && token === this.generation && this.canvas.getObjects().includes(text)) {
-        applyTextProperties(text, values); this.textDefaults = { ...values }; this.canvas.requestRenderAll();
+        applyTextProperties(text, values); this.textDefaults = { ...values }; keepSize(); this.canvas.requestRenderAll();
       }
     } catch (error) {
       if (!this.disposed && token === this.generation) {
-        this.fontRetry = { generation: token, selectedId: text.editorId, message: (error as Error).message, run: () => this.updateText(values) };
+        this.fontRetry = { generation: token, selectedId: text.editorId, message: (error as Error).message, run: () => this.updateText(values, explicitSize) };
         this.report(error);
       }
     }
@@ -1222,6 +1370,7 @@ export class EditorController {
   }
 
   private async generateResultPreview(snapshot: DocumentSnapshot, result: PendingResult, current: () => boolean) {
+    const run = this.eraseRun, attempt = ++this.erasePreviewAttempt;
     let beforeUrl: string | undefined, afterUrl: string | undefined;
     try {
       const next = applyResult(snapshot, this.imageData(this.assets.get(result.assetId), "消除结果"));
@@ -1235,6 +1384,7 @@ export class EditorController {
       this.notice = "消除结果已返回，请检查后使用或放弃";
     } catch {
       if (current()) {
+        run?.previewFailed("generate", attempt, `generate:${attempt}`);
         this.pending = { ...result, previewPreparing: false,
           previewError: "对比图片生成失败，消除结果已保留。可重新生成预览，无需重新消除。" };
         this.notice = "对比图片生成失败，消除结果已保留";
@@ -1255,7 +1405,12 @@ export class EditorController {
     this.selection.endMove(); this.space = false; this.panning = undefined;
     this.finishText(); this.commit();
     const snapshot = this.snapshot(), documentId = this.documentId, revision = this.revision;
-    const job = { id: uid("request"), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now() }; this.job = job;
+    const job = { id: crypto.randomUUID(), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now() }; this.job = job;
+    this.eraseRun?.decision("no_decision", "stale");
+    const context = this.integration?.context;
+    const run = this.telemetry.start({ requestId: job.id, documentId, imageSessionId: this.imageSessionId, revision, ...snapshot.size, source: this.source,
+      ...(context ? { taskId: context.taskId, imageId: context.imageId } : {}) });
+    this.eraseRun = run; this.erasePreviewAttempt = 0;
     const heldAssets = assetIds(snapshot); this.processingAssets.set(job.id, heldAssets);
     const current = () => !this.disposed && this.job === job && !job.controller.signal.aborted && this.documentId === documentId && this.revision === revision;
     this.configure(); this.setEraseStage("preparing");
@@ -1266,7 +1421,9 @@ export class EditorController {
       const image = await renderDocument(snapshot, this.assets, "base");
       if (!current()) return;
       this.setEraseStage("waiting");
-      const result = await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal });
+      run.requestStarted();
+      const result = await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal,
+        requestId: job.id, onResponse: details => { if (current()) run.response(details); } });
       if (!current()) return;
       this.setEraseStage("preview");
       let asset: ImageAsset;
@@ -1275,9 +1432,11 @@ export class EditorController {
       heldAssets.add(asset.id);
       if (!current()) return;
       if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("消除结果尺寸与当前图片不一致，未采用，请稍后重试");
+      run.requestFinished("success");
       await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region }, current);
     } catch (error) {
       if (current()) {
+        if (job.stage === "preparing") run.preparationFailed(); else run.requestFinished("failure", eraseFailureCode(error));
         const reason = error instanceof TypeError ? "无法连接消除服务，请稍后重试" : (error as Error)?.message || "请稍后重试";
         this.report(new Error(`消除失败，图片和选区已保留。${reason}`));
       }
@@ -1293,7 +1452,7 @@ export class EditorController {
   async retryResultPreview() {
     const pending = this.pending;
     if (!pending?.previewError || this.job || this.busy || this.confirmation || this.disposed) return;
-    if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult(); return; }
+    if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult("stale"); return; }
     const snapshot = this.snapshot();
     const job = { id: uid("preview"), controller: new AbortController(), stage: "preview" as EraseStage, startedAt: Date.now() }; this.job = job;
     const heldAssets = assetIds(snapshot); heldAssets.add(pending.assetId); this.processingAssets.set(job.id, heldAssets);
@@ -1309,31 +1468,43 @@ export class EditorController {
       }
     }
   }
-  cancelTask() {
+  /** Called by the mounted preview only after real image load/error events. */
+  reportErasePreview(assetId: string, beforeUrl: string, afterUrl: string, outcome: "shown" | "failed", loadAttempt: number) {
+    const pending = this.pending;
+    if (this.disposed || !pending || pending.assetId !== assetId || pending.beforeUrl !== beforeUrl || pending.afterUrl !== afterUrl ||
+        !beforeUrl || !afterUrl || pending.previewError || pending.previewPreparing) return;
+    if (outcome === "shown") this.eraseRun?.previewShown();
+    else this.eraseRun?.previewFailed("load", loadAttempt + 1, `load:${this.erasePreviewAttempt}:${loadAttempt}`);
+  }
+  cancelTask(reason: EraseExitReason = "user_cancel") {
     if (!this.job) return;
+    this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
+    if (!this.pending) this.eraseRun?.decision("no_decision", reason);
     this.job.controller.abort(); this.job = undefined;
     if (this.pending?.previewPreparing) this.pending = { ...this.pending, previewPreparing: false };
     this.notice = "已取消等待，图片和选区已保留";
     this.configure(); this.emit();
   }
-  discardResult() {
+  discardResult(reason: EraseExitReason | "accepted" = "user_discard") {
     if (!this.pending) return;
-    if (this.pending.previewPreparing) this.cancelTask();
+    if (this.pending.previewPreparing) this.cancelTask(reason === "accepted" ? "stale" : reason);
+    if (reason !== "accepted") this.eraseRun?.decision(reason === "user_discard" ? "discarded" : "no_decision", reason);
     URL.revokeObjectURL(this.pending.beforeUrl); URL.revokeObjectURL(this.pending.afterUrl);
     this.pending = undefined; this.notice = "已放弃结果，当前图片未改变"; this.collect(); this.configure(); this.emit();
   }
   async acceptResult() {
     const pending = this.pending;
     if (!pending || this.busy || this.job || this.confirmation || pending.previewError || !pending.beforeUrl || !pending.afterUrl) return;
-    if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult(); this.notice = "文档已变化，旧结果不能采用"; this.emit(); return; }
+    if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult("stale"); this.notice = "文档已变化，旧结果不能采用"; this.emit(); return; }
     this.pending = { ...pending, acceptError: undefined };
     this.busy = true; this.configure(); this.emit();
     try {
       const snapshot = applyResult(this.snapshot(), this.imageData(this.assets.get(pending.assetId), "消除结果"));
       await this.loadSnapshot(snapshot);
-      if (!this.disposed) { this.busy = false; this.discardResult(); this.tool = "erase"; this.configure(); this.commit(); this.notice = "已使用消除结果，可继续选择区域"; }
+      if (!this.disposed) { this.eraseRun?.decision("accepted"); this.busy = false; this.discardResult("accepted"); this.tool = "erase"; this.configure(); this.commit(); this.notice = "已使用消除结果，可继续选择区域"; }
     } catch {
       if (!this.disposed && this.pending?.assetId === pending.assetId) {
+        this.eraseRun?.applyFailed();
         this.pending = { ...pending, acceptError: "暂时无法使用结果，图片和选区已保留。可重试使用，无需重新消除。" };
       }
     }
@@ -1529,8 +1700,16 @@ export class EditorController {
     this.configure(); this.emit();
   };
   private beforeUnload = (event: BeforeUnloadEvent) => { if (!this.closed && !this.savedRecord && this.ready && (this.dirty || this.job || this.pending || this.submitting)) { event.preventDefault(); event.returnValue = ""; } };
+  private finishEraseTelemetry(reason: "page_exit" | "unmount") {
+    if (this.job) this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
+    this.eraseRun?.decision("no_decision", reason);
+  }
+  private pageHide = (event: PageTransitionEvent) => { if (!event.persisted) this.finishEraseTelemetry("page_exit"); };
 
   dispose() {
+    this.previewSubmission?.controller.abort(); this.previewSubmission = undefined; this.submissionRun++;
+    this.finishEraseTelemetry("unmount");
+    this.clearReplacementPreview();
     this.confirmationResolve?.(false); this.confirmationResolve = undefined; this.confirmation = undefined;
     this.colorLens?.remove(); this.colorLens = undefined; this.colorEdit = undefined;
     this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
@@ -1540,6 +1719,7 @@ export class EditorController {
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);
     window.removeEventListener("pointerdown", this.windowPointerDown, true);
     window.removeEventListener("beforeunload", this.beforeUnload);
+    window.removeEventListener("pagehide", this.pageHide);
     cancelAnimationFrame(this.previewFrame); this.previewCanvas.width = this.previewCanvas.height = 0; this.committedMaskCanvas.width = this.committedMaskCanvas.height = 0;
     if (this.pending) { URL.revokeObjectURL(this.pending.beforeUrl); URL.revokeObjectURL(this.pending.afterUrl); }
     this.textInputEvents?.abort(); this.emptyTexts.clear(); this.fontRetry = undefined;

@@ -44,6 +44,20 @@ test("blank credentials fail locally, without sending upstream", async t => {
   const response = await fetch(`${base}/api/eraser`, { method: "POST", body: form() });
   assert.equal(response.status, 503); assert.equal((await response.json()).detail.code, "LAMA_CREDENTIALS_MISSING"); assert.equal(calls, 0);
 });
+
+test("frontend request identity reaches the algorithm without forwarding metadata", async t => {
+  const upstream = await serve(t, async (req, res) => {
+    assert.equal(req.headers["x-request-id"], "request-frontend-test");
+    const buffers = []; for await (const buffer of req) buffers.push(buffer);
+    const data = await new Request("http://localhost", { method: "POST", body: Buffer.concat(buffers), headers: req.headers }).formData();
+    assert.deepEqual([...data.keys()], ["image", "mask"]);
+    res.writeHead(200, { "content-type": "image/jpeg", "x-algorithm-version": "lama-test-v2" }).end("result");
+  });
+  const body = form(); body.set("metadata", JSON.stringify({ requestId: "request-frontend-test", documentId: "local-only" }));
+  const base = await proxy(t, upstream); const response = await fetch(`${base}/api/eraser`, { method: "POST", body });
+  assert.equal(await response.text(), "result"); assert.equal(response.headers.get("x-request-id"), "request-frontend-test");
+  assert.equal(response.headers.get("x-algorithm-version"), "lama-test-v2");
+});
 for (const [status, payload] of [[401, { status: false, results: null, msg: "Unauthorized" }], [422, { detail: { code: "IMAGE_MASK_SIZE_MISMATCH" } }], [429, { detail: { code: "LAMA_INPAINT_BUSY" } }]]) {
   test(`upstream HTTP ${status} and error body are preserved`, async t => {
     const upstream = await serve(t, (_req, res) => res.writeHead(status, { "content-type": "application/json", "retry-after": "1" }).end(JSON.stringify(payload)));

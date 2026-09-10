@@ -84,6 +84,18 @@ export async function checkAdjustments(check: (condition: boolean, message: stri
     const finalPixel = await sample(await renderDocument(privateEditor.snapshot(), privateEditor.assets, "final", "png"));
     check(close(finalPixel, [0, 255, 0, 255]) && !close(basePixel, finalPixel), "调色只作用底图，新增图形保持原色并独立进入最终成图");
     const stable = await sample(await exported()), stored = { ...state().adjustments };
+    editor.selectLayer(shapeId); editor.setTool("adjust");
+    const comparisonView = [...editor.canvas.viewportTransform], comparisonSelection = editor.canvas.getActiveObject();
+    const comparisonRevision = privateEditor.revision, comparisonSnapshot = JSON.stringify(privateEditor.snapshot());
+    const screenPixel = (x: number, y: number) => {
+      editor.canvas.renderAll(); const v = editor.canvas.viewportTransform;
+      return [...editor.canvas.lowerCanvasEl.getContext("2d")!.getImageData(Math.round(x * v[0] + v[4]), Math.round(y * v[3] + v[5]), 1, 1).data];
+    };
+    editor.setCompareAdjustments(true);
+    check(state().compareAdjustments === true && close(screenPixel(100, 100), [96, 128, 160, 255]) && close(screenPixel(32, 32), [0, 255, 0, 255]), "按住调色前展示未调色底图并保留新增图形的实际颜色");
+    check(close(await sample(await exported()), stable) && JSON.stringify(privateEditor.snapshot()) === comparisonSnapshot, "临时调色对比不改变序列化参数或最终导出像素");
+    editor.setCompareAdjustments(false);
+    check(privateEditor.revision === comparisonRevision && editor.canvas.getActiveObject() === comparisonSelection && editor.canvas.viewportTransform.every((value, i) => value === comparisonView[i]), "松开调色对比保持选择、视野和历史");
     editor.setAdjustments(stored, true); editor.setAdjustments(stored, true);
     check(close(await sample(await exported()), stable), "重复应用同参数不累计效果");
     editor.setAdjustments(DEFAULT_ADJUSTMENTS, true); await editor.undo();
@@ -106,6 +118,10 @@ export async function checkAdjustments(check: (condition: boolean, message: stri
     check(!!state().pending && close(inputPixel, stable, 5), "消除请求包含当前组合调色效果，不合并新增图形");
     await editor.acceptResult();
     check(JSON.stringify(state().adjustments) === JSON.stringify(DEFAULT_ADJUSTMENTS) && state().layers.some(layer => layer.id === shapeId), "采用消除结果清空已烘焙参数，保留新增图层");
+    editor.setTool("adjust"); editor.setAdjustments({ ...state().adjustments, brightness: 15 }, true);
+    editor.setCompareAdjustments(true);
+    check(close(screenPixel(100, 100), [160, 176, 192, 255]), "调色前对比保留已采用消除结果，不显示进入编辑时原图");
+    editor.setCompareAdjustments(false); await editor.undo();
     editor.setAdjustments({ ...state().adjustments, brightness: 15 }, true); editor.setAdjustments(DEFAULT_ADJUSTMENTS, true);
     check(close(await sample(await exported()), [160, 176, 192, 255]), "重置调色保留已采用消除结果，不返回初始原图");
     await editor.undo(); await editor.undo(); await editor.undo();

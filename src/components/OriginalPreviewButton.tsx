@@ -2,14 +2,23 @@ import { useEffect, useRef } from "react";
 import { Columns2 } from "lucide-react";
 import type { EditorController } from "../editor/EditorController";
 import { ActionButton } from "./ActionButton";
+import type { ReactNode } from "react";
 
 export function OriginalPreviewButton({ engine, active, disabled, below = false, className }: {
   engine: EditorController | null; active: boolean; disabled: boolean; below?: boolean; className?: string;
 }) {
+  return <HoldPreviewButton active={active} disabled={disabled} below={below} className={className}
+    label="按住查看原图" change={value => engine?.setCompare(value)}><Columns2 /></HoldPreviewButton>;
+}
+
+export function HoldPreviewButton({ active, disabled, below = false, floating = false, className, label, change, children }: {
+  active: boolean; disabled: boolean; below?: boolean; floating?: boolean; className?: string; label: string; change: (value: boolean) => void; children: ReactNode;
+}) {
+  const changeRef = useRef(change); changeRef.current = change;
   const held = useRef<{ pointer: number } | { key: string } | null>(null);
   const release = () => {
     if (!held.current) return;
-    held.current = null; engine?.setCompare(false);
+    held.current = null; changeRef.current(false);
   };
   useEffect(() => {
     const pointerUp = (event: PointerEvent) => {
@@ -35,15 +44,15 @@ export function OriginalPreviewButton({ engine, active, disabled, below = false,
       document.removeEventListener("visibilitychange", visibility);
       release();
     };
-  }, [engine]);
+  }, []);
   useEffect(() => { if (disabled) release(); }, [disabled]);
 
-  return <ActionButton below={below} className={className} hint={active ? "松开返回编辑" : "按住查看原图"} aria-label="按住查看原图" aria-pressed={active} disabled={disabled}
+  return <ActionButton below={below} floating={floating} className={className} hint={active ? "松开返回编辑" : label} aria-label={label} aria-pressed={active} disabled={disabled}
     onPointerDown={event => {
       if (event.button !== 0 || held.current || active || disabled) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      held.current = { pointer: event.pointerId }; engine?.setCompare(true);
+      held.current = { pointer: event.pointerId }; changeRef.current(true);
     }}
     onLostPointerCapture={event => { if (held.current && "pointer" in held.current && held.current.pointer === event.pointerId) release(); }}
     onBlur={release}
@@ -51,8 +60,8 @@ export function OriginalPreviewButton({ engine, active, disabled, below = false,
       if (event.key !== " " && event.key !== "Enter") return;
       event.preventDefault(); event.stopPropagation();
       if (event.repeat || held.current || active || disabled) return;
-      held.current = { key: event.key }; engine?.setCompare(true);
+      held.current = { key: event.key }; changeRef.current(true);
     }}
     onKeyUp={event => { if (event.key === " " || event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }}
-    onClick={event => event.preventDefault()}><Columns2 /></ActionButton>;
+    onClick={event => event.preventDefault()}>{children}</ActionButton>;
 }
