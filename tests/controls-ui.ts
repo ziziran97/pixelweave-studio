@@ -178,7 +178,7 @@ try {
   const controls = host.querySelector<HTMLElement>(".canvas-controls")!.getBoundingClientRect();
   check([...host.querySelectorAll<HTMLElement>(".zoom-control button")].every(item => { const box = item.getBoundingClientRect(); return box.left >= controls.left && box.right <= controls.right; }), "较窄画布的操作按钮不溢出");
   host.style.width = ""; await paint();
-  const fileInput = host.querySelector<HTMLInputElement>("input[type=file][accept='.jpg,.jpeg']")!;
+  const fileInput = host.querySelector<HTMLInputElement>("input[type=file][accept*='.jpg'][accept*='.png']")!;
   const upload = () => host.querySelector<HTMLButtonElement>(".upload-button")!;
   const confirmation = () => host.querySelector<HTMLDialogElement>(".confirmation-dialog");
   const chooseFile = async (file?: File) => {

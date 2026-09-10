@@ -1,5 +1,6 @@
 import { Textbox, classRegistry, util } from "fabric";
 import type { DrawContext } from "fabric";
+import { scaleTextFromCorner } from "./textScaling";
 
 const eastAsian = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u3000-\u303f\uff01-\uff60]/u;
 const opening = new Set(Array.from("（［｛〈《「『【〔〖〘〚‘“([{«"));
@@ -162,7 +163,8 @@ export class ContentTextbox extends Textbox {
   }
   static createControls() {
     const { controls } = Textbox.createControls();
-    return { controls: { ml: controls.ml, mr: controls.mr, mtr: controls.mtr } };
+    for (const corner of ["tl", "tr", "bl", "br"]) controls[corner].actionHandler = scaleTextFromCorner;
+    return { controls: { tl: controls.tl, tr: controls.tr, bl: controls.bl, br: controls.br, ml: controls.ml, mr: controls.mr, mtr: controls.mtr } };
   }
   _renderBackground(ctx: CanvasRenderingContext2D) {
     if (!this.editorTextBackground) return;

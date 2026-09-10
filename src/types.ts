@@ -132,6 +132,7 @@ export type EditorView = {
   brushSize: number; drawSize: number; color: string;
   zoom: number; size: DocumentSize; layers: LayerItem[]; selectionCount: number;
   canCenterSelection?: boolean;
+  canPasteLayer?: boolean;
   shape: ShapeProperties; shapeKind?: "rect" | "circle"; drawing?: { color: string; width: number };
   shapeRadiusMax?: number;
   picking: boolean; colorEditing: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;

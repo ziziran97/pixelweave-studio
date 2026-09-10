@@ -4,9 +4,10 @@ import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { ActionButton } from "./ActionButton";
 
-export function LayersPanel({ view, engine, disabled, hidden = false, locate }: {
+export function LayersPanel({ view, engine, disabled, hidden = false, locate, contextMenu }: {
   view: EditorView; engine: EditorController | null; disabled: boolean; hidden?: boolean;
   locate?: { id: string; request: number };
+  contextMenu?: (event: React.MouseEvent<HTMLElement>, id: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const previousIds = useRef<string[]>([]);
@@ -61,7 +62,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
         const status = [problem && "文案需修改", base && "底图 · 固定", !layer.visible && "已隐藏", layer.locked && !base && "已锁定", layer.transparent && "完全透明"].filter(Boolean).join(" · ");
         const reason = base ? "底图固定，不可选择" : !layer.visible && layer.locked ? "显示并解锁后可编辑" : !layer.visible ? "显示后可编辑" : layer.locked ? "解锁后可编辑" : undefined;
         const showProblemDetails = problem && problemInspection?.id === layer.id && problemInspection.selectionKey === selectionKey && !layer.selected;
-        return <div key={layer.id} tabIndex={-1} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}${showProblemDetails ? " inspecting-problem" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
+        return <div key={layer.id} tabIndex={-1} onContextMenu={event => contextMenu?.(event, layer.id)} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}${showProblemDetails ? " inspecting-problem" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
           <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => { setProblemInspection(undefined); engine?.selectLayer(layer.id); }} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
             <span className={`layer-thumb role-${layer.role}`}>
               {layer.thumbnailUrl ? <img src={layer.thumbnailUrl} alt="" /> : <Icon aria-hidden="true" />}

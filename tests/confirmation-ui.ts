@@ -55,7 +55,7 @@ try {
   accept.click(); accept.click();
   await settle(() => replacements === 1 && !submit().disabled);
   check(validations === 1 && replacements === 1 && !dialog(), "连续确认只执行一次检测和保存，失败回到可编辑草稿");
-  const fileInput = host.querySelector<HTMLInputElement>("input[type=file][accept='.jpg,.jpeg']")!;
+  const fileInput = host.querySelector<HTMLInputElement>("input[type=file][accept*='.jpg'][accept*='.png']")!;
   const files = new DataTransfer(); files.items.add(new File([fixture], "upload.jpg"));
   fileInput.files = files.files; fileInput.dispatchEvent(new Event("change", { bubbles: true }));
   await settle(() => !!dialog()?.open);

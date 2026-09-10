@@ -76,7 +76,7 @@ export async function checkWorkspacePersistence(check: (condition: boolean, mess
     check(state().workspace === "text" && !!state().text && !state().selectedId, "文字经过选择和平移后，取消选择仍保留新文字样式");
     editor.selectLayer(textId); await editor.updateText({ ...state().text!, fontSize: 60 }); await editor.undo();
     check(state().selectedId === textId && state().workspace === "text", "撤销文字属性保留文字选择及工作区");
-    check(clearSelectionFrame() && Object.keys(editor.canvas.getActiveObject()!.controls).sort().join() === "ml,mr,mtr", "文字撤销后旋转点仍为白底蓝边，保持左右调宽及旋转方式");
+    check(clearSelectionFrame() && Object.keys(editor.canvas.getActiveObject()!.controls).sort().join() === "bl,br,ml,mr,mtr,tl,tr", "文字撤销后保留七个白底蓝边控制点，左右调宽及旋转方式不变");
     const mixed = [textId, brushId].map(id => editor.canvas.getObjects().find(object => object.editorId === id)!);
     editor.canvas.setActiveObject(new ActiveSelection(mixed, { canvas: editor.canvas }));
     check(clearSelectionFrame(), "混合多选创建时立即使用统一外框和白色控制点");
@@ -237,8 +237,8 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     text.text = "Product copy\nSecond line"; text.exitEditing(); text.initDimensions();
     await editor.updateText({ ...state().text!, fontSize: 24, fontStyle: "italic", background: true, backgroundColor: "#ffffff", backgroundPadding: 14, backgroundRadius: 6 });
     const textId = text.editorId!;
-    check(text instanceof ContentTextbox && !text.controls.tl && !!text.controls.ml && !!text.controls.mtr,
-      "文字左右控制点改宽度，保留旋转且不提供拉伸字号控制点");
+    check(text instanceof ContentTextbox && !!text.controls.tl && !!text.controls.br && !!text.controls.ml && !!text.controls.mtr,
+      "文字提供四角字号缩放，同时保留左右调宽和旋转控制点");
     check(state().layers.some(layer => layer.name === "Product copy Second line"), "文字图层名称跟随实际文案摘要");
     const width = text.width, height = text.height;
     await editor.duplicateSelected();
@@ -268,8 +268,7 @@ export async function checkEditingTools(check: (condition: boolean, message: str
     check(!state().compareOriginal && snapshot() === beforeCompare && editor.canvas.viewportTransform.every((value, i) => value === sameSizeViewport[i]), "重复开始或结束对比不覆盖工作视图和编辑内容");
 
     const before = snapshot(), initialLayerCount = state().layers.length;
-    const png = await picture("#00ff00", 200, 150, "image/png");
-    for (const file of [new File([png], "伪装.jpg"), new File([source], "错误.png"), new File([new Uint8Array([255,216,255,0])], "损坏.jpeg")]) {
+    for (const file of [new File(["GIF89a"], "不支持.jpg"), new File([new Uint8Array([137,80,78,71,13,10,26,10])], "损坏.png"), new File([new Uint8Array([255,216,255,0])], "损坏.jpeg")]) {
       await confirm(() => editor.uploadReplacement(file));
       check(snapshot() === before && state().layers.length === initialLayerCount, `${file.name}被拒绝且完整保留草稿`);
     }
