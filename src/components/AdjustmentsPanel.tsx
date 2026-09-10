@@ -4,7 +4,7 @@ import type { EditorController } from "../editor/EditorController";
 import { adjustmentFilters, filterThumbnails, IMAGE_FILTERS } from "../editor/adjustments";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import type { EditorView, ImageAdjustments, ImageFilter } from "../types";
-import { NumberField } from "./TextPanel";
+import { NumberField } from "./NumberField";
 import { PropertySlider } from "./PropertySlider";
 import { ColorField } from "./ColorField";
 import { ActionButton } from "./ActionButton";
@@ -37,7 +37,7 @@ export function AdjustmentsPanel({ view, engine, disabled }: { view: EditorView;
   const control = (key: "brightness" | "contrast" | "saturation" | "temperature" | "sharpen" | "overlayStrength" | "filterStrength", label: string, min = 0, unit?: string) =>
     <div className="shape-number-control adjustment-control" key={key}>
       <div className="adjustment-number-row">
-      <NumberField label={label} value={values[key]} min={min} max={100} unit={unit} cancelOnEscape onChange={value => update({ [key]: value })} />
+      <NumberField engine={engine} label={label} value={values[key]} min={min} max={100} unit={unit} cancelOnEscape onChange={value => update({ [key]: value }, false)} />
       <ActionButton floating className="adjustment-single-reset" hint={`恢复${label}为 ${DEFAULT_ADJUSTMENTS[key]}${unit ?? ""}`} aria-label={`重置${label}`} disabled={values[key] === DEFAULT_ADJUSTMENTS[key]} onClick={() => update({ [key]: DEFAULT_ADJUSTMENTS[key] })}><RotateCcw size={14} /></ActionButton>
       </div>
       <PropertySlider label={`${label}滑块`} min={min} max={100} value={values[key]} change={value => update({ [key]: value }, false)} commit={() => engine.finishPropertyEdit()} />

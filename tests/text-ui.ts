@@ -12,7 +12,11 @@ import { frame, picture, settle } from "./editing-tools";
 import "../src/styles.css";
 
 const reports: string[] = [];
-const check = (value: boolean, message: string) => { if (!value) throw new Error(message); reports.push(`PASS ${message}`); };
+const check = (value: boolean, message: string) => {
+  if (!value) throw new Error(message);
+  reports.push(`PASS ${message}`);
+  document.getElementById("results")!.textContent = `${reports.join("\n")}\n运行中…`;
+};
 const host = document.getElementById("test-root")!, root = createRoot(host);
 const paint = async () => { await frame(); await frame(); };
 const button = (name: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;

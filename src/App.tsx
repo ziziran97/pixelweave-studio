@@ -21,6 +21,8 @@ import { OriginalPreviewButton } from "./components/OriginalPreviewButton";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { ShortcutHelp } from "./components/ShortcutHelp";
 import { AdjustmentsPanel } from "./components/AdjustmentsPanel";
+import { LayerContextMenu } from "./components/LayerContextMenu";
+import type { LayerMenuPosition } from "./components/LayerContextMenu";
 
 type EditorIconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 type EditorIcon = ComponentType<EditorIconProps>;
@@ -51,6 +53,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
   const [layersOpen, setLayersOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [layerMenu, setLayerMenu] = useState<LayerMenuPosition>();
   const [canvasInteracting, setCanvasInteracting] = useState(false);
   const canvasPointer = useRef<number | undefined>(undefined);
   const settingsRequest = useRef(0);
@@ -72,6 +75,21 @@ export default function App({ integration, preview = false }: { integration?: Ed
     return () => { cancelled = true; controller?.dispose(); };
   }, [integration, previewOnly]);
   const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || !!view.compareAdjustments || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
+  const closeLayerMenu = (restoreFocus = true) => {
+    setLayerMenu(undefined);
+    if (restoreFocus && layerMenu?.origin.isConnected) layerMenu.origin.focus({ preventScroll: true });
+  };
+  const showLayerMenu = (event: React.MouseEvent<HTMLElement>, id?: string) => {
+    const ids = engine?.contextSelectionAt(id ? undefined : event.nativeEvent, id);
+    if (!ids?.length) return;
+    event.preventDefault(); event.stopPropagation();
+    setLayerMenu({ x: event.clientX, y: event.clientY, ids, origin: event.currentTarget });
+  };
+  const selectionKey = view.layers.filter(layer => layer.selected).map(layer => layer.id).sort().join();
+  useEffect(() => {
+    if (layerMenu && (locked || helpOpen || view.unfinishedSelection || view.textEditing ||
+      !["select", "text"].includes(view.tool) || [...layerMenu.ids].sort().join() !== selectionKey)) setLayerMenu(undefined);
+  }, [locked, helpOpen, view.unfinishedSelection, view.textEditing, view.tool, selectionKey, layerMenu]);
   const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking || !!view.compareAdjustments;
   const execute = () => { void engine?.executeErase(); };
   const panelKind = view.workspace;
@@ -116,7 +134,16 @@ export default function App({ integration, preview = false }: { integration?: Ed
   } : undefined;
 
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
-  return <div className="app-shell">
+  return <div className="app-shell" onKeyDown={event => {
+    if (!(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+    const target = event.target instanceof HTMLElement ? event.target : undefined;
+    if (!target || target.closest("input,textarea,select,[contenteditable=true]")) return;
+    const origin = target.closest<HTMLElement>(".layer-card,.canvas-viewport"); if (!origin) return;
+    const ids = engine?.contextSelectionAt(undefined, origin.dataset.layerId); if (!ids?.length) return;
+    event.preventDefault(); event.stopPropagation();
+    const bounds = origin.getBoundingClientRect();
+    setLayerMenu({ ids, origin, x: bounds.left + 20, y: bounds.top + 28 });
+  }}>
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable、supreme（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable、supreme</small>}</span>
         {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "success"}
@@ -159,7 +186,9 @@ export default function App({ integration, preview = false }: { integration?: Ed
         </div>
       </aside>
       <section className="canvas-stage">
-        <div ref={viewportRef} className="canvas-viewport" aria-label="图片编辑画布" tabIndex={-1} onPointerDownCapture={event => { if (event.button === 0 && event.target instanceof HTMLCanvasElement && canvasPointer.current === undefined) { canvasPointer.current = event.pointerId; setCanvasInteracting(true); } }}>
+        <div ref={viewportRef} className="canvas-viewport" aria-label="图片编辑画布" tabIndex={-1}
+          onContextMenuCapture={event => { if (event.target instanceof HTMLCanvasElement) showLayerMenu(event); }}
+          onPointerDownCapture={event => { if (event.button === 0 && event.target instanceof HTMLCanvasElement && canvasPointer.current === undefined) { canvasPointer.current = event.pointerId; setCanvasInteracting(true); } }}>
           <canvas ref={canvasRef} /><canvas ref={overlayRef} className="mask-overlay" aria-hidden="true" />
           {view.picking && <div className="picking-hint" role="status">点击图片取色<button onClick={() => engine?.cancelColorPick()}>取消</button></div>}
           {!view.picking && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} locateProblem={locked ? undefined : locateProblem} />}
@@ -188,13 +217,14 @@ export default function App({ integration, preview = false }: { integration?: Ed
           </div>
         </div>
       </section>
-      <LayersPanel view={view} engine={engine} disabled={locked} hidden={!layersOpen} locate={layerLocation} />
+      <LayersPanel view={view} engine={engine} disabled={locked} hidden={!layersOpen} locate={layerLocation} contextMenu={showLayerMenu} />
     </main>
-    <input ref={fileRef} type="file" accept=".jpg,.jpeg" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
+    <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
     {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} previewOnly={previewOnly} />}
     {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} retryPreview={() => void engine?.retryResultPreview()}
       onPreviewState={(outcome, attempt) => engine?.reportErasePreview(view.pending!.assetId, view.pending!.beforeUrl, view.pending!.afterUrl, outcome, attempt)} />}
     {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} retryPreview={id => void engine.retryReplacementPreview(id)} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
     {helpOpen && <ShortcutHelp close={() => setHelpOpen(false)} />}
+    {layerMenu && engine && <LayerContextMenu position={layerMenu} view={view} engine={engine} close={closeLayerMenu} />}
   </div>;
 }

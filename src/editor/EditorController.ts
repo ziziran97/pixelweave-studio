@@ -1,4 +1,4 @@
-import { ActiveSelection, Ellipse, FabricImage, Path, Point, Rect, Textbox } from "fabric";
+import { ActiveSelection, Ellipse, FabricImage, Path, Point, Rect, Textbox, util } from "fabric";
 import type { FabricObject, TPointerEventInfo } from "fabric";
 import { editorConfig } from "../config";
 import { callEraseApi, eraseFailureCode } from "../lib/eraseApi";
@@ -7,12 +7,12 @@ import type { EraseExitReason, EraseTelemetryRun } from "../telemetry";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
 import type { DocumentSnapshot, EditorView, EraseMode, EraseStage, ImageAdjustments, ImageRegion, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
-import { Assets, defaultImage, validateJpeg } from "./assets";
+import { Assets, defaultImage, validateJpeg, prepareUploadedImage } from "./assets";
 import type { ImageAsset } from "./assets";
 import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumentContent, uid } from "./model";
 import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from "./mask";
 import { makeSurface, renderDocument } from "./render";
-import { ensureFont } from "./fonts";
+import { ensureFont, ensureObjectFonts } from "./fonts";
 import { applyTextProperties, applyTextBackgroundOpacity, textProperties, DEFAULT_TEXT, isVerticalText } from "./text";
 import { textPlacement } from "./textPlacement";
 import { SelectionGesture } from "./SelectionGesture";
@@ -37,6 +37,8 @@ function strokeOutline(ctx: CanvasRenderingContext2D, halo = 1) {
 }
 export type ColorChannel = "drawing" | "shape" | "fill" | "backgroundColor" | "stroke" | "shadowColor" | "overlay";
 export interface ColorEdit { preview(color: string): void; finish(apply: boolean): void }
+export interface NumberEdit { active(): boolean; finish(): void; cancel(): void }
+type TextNumber = "fontSize" | "charSpacing" | "lineHeight" | "backgroundPadding" | "backgroundRadius" | "strokeWidth" | "shadowBlur" | "shadowOffsetX" | "shadowOffsetY";
 const POSITION_KEYS: Record<string, readonly [number, number]> = {
   ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
 };
@@ -79,6 +81,9 @@ export class EditorController {
   private propertiesRequest = 0;
   private changingSelection = false;
   private propertyEdit = false;
+  private numberEdit?: NumberEdit;
+  private clipboard?: { data: ObjectData; offset: number };
+  private clipboardFocus = false;
   private nudgeKeys = new Set<string>();
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
   private operation: "add" | "subtract" = "add";
@@ -156,6 +161,7 @@ export class EditorController {
     });
     this.canvas.on("object:moving", () => this.emit());
     this.canvas.on("object:scaling", ({ target }) => {
+      if (target instanceof Textbox) { this.textDefaults = textProperties(target); this.automaticTextSize = false; }
       for (const object of target instanceof ActiveSelection ? target.getObjects() : [target]) {
         if (object instanceof Rect) syncRectRadius(object);
       }
@@ -289,6 +295,7 @@ export class EditorController {
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
+      canPasteLayer: !!this.clipboard && !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft,
       canCenterSelection: selected.length === 1 && !!this.positionTarget(),
       text: single instanceof Textbox ? textProperties(single) : this.workspace === "text" && !selected.length ? { ...this.textDefaults } : undefined,
       textEditing: single instanceof Textbox && single.isEditing,
@@ -590,7 +597,39 @@ export class EditorController {
     object.setCoords(); this.canvas.requestRenderAll();
     if (commit) this.commit(); else this.emit();
   }
-  finishPropertyEdit() { if (this.propertyEdit) this.commit(); }
+  finishPropertyEdit() {
+    this.numberEdit = undefined;
+    if (this.propertyEdit) this.commit();
+  }
+  beginNumberEdit(): NumberEdit | undefined {
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.canvas.getActiveObjects().length > 1) return;
+    this.finishText(); this.finishPropertyEdit();
+    const object = this.canvas.getActiveObject(), generation = this.generation, workspace = this.workspace;
+    const text = object instanceof Textbox ? textProperties(object) : undefined;
+    const textWidth = object instanceof Textbox ? object.width : undefined;
+    const shape = object instanceof Rect || object instanceof Ellipse ? shapeProperties(object) : undefined;
+    const width = object instanceof Path ? object.strokeWidth : undefined;
+    const before = { text: { ...this.textDefaults }, shape: { ...this.shapeDefaults }, adjustments: { ...this.adjustments },
+      drawSize: this.drawSize, brushSize: this.brushSize, automaticTextSize: this.automaticTextSize };
+    const edit: NumberEdit = {
+      active: () => this.numberEdit === edit && !this.disposed && generation === this.generation &&
+        object === this.canvas.getActiveObject() && workspace === this.workspace,
+      finish: () => { if (this.numberEdit === edit) this.finishPropertyEdit(); },
+      cancel: () => {
+        if (!edit.active()) return;
+        this.numberEdit = undefined;
+        if (object instanceof Textbox && text) { object.set("width", textWidth!); applyTextProperties(object, text); }
+        if ((object instanceof Rect || object instanceof Ellipse) && shape) applyShapeProperties(object, shape);
+        if (object instanceof Path && width !== undefined) { object.set("strokeWidth", width); object.setCoords(); }
+        if (JSON.stringify(this.adjustments) !== JSON.stringify(before.adjustments)) this.applyAdjustments(before.adjustments);
+        this.textDefaults = before.text; this.shapeDefaults = before.shape;
+        this.drawSize = before.drawSize; this.brushSize = before.brushSize; this.automaticTextSize = before.automaticTextSize;
+        this.propertyEdit = false; this.canvas.requestRenderAll(); this.configure(); this.emit();
+      },
+    };
+    this.numberEdit = edit;
+    return edit;
+  }
   beginColorEdit(channel: ColorChannel): ColorEdit | undefined {
     if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.canvas.getActiveObjects().length > 1) return;
     this.finishText(); this.finishPropertyEdit();
@@ -711,7 +750,7 @@ export class EditorController {
     this.busy = true; this.configure(); this.notice = "正在校验并载入图片…"; this.emit();
     const token = this.generation;
     try {
-      const { jpeg } = await validateJpeg(file, file.name);
+      const { jpeg, converted } = await prepareUploadedImage(file);
       const asset = await this.assets.add(jpeg);
       if (this.disposed || token !== this.generation) return;
       const next: DocumentSnapshot = { size: { width: asset.width, height: asset.height }, objects: [this.imageData(asset, "上传图片")],
@@ -721,8 +760,9 @@ export class EditorController {
       if (this.disposed || token !== this.generation) return;
       this.cancelTask("upload"); this.discardResult("upload"); this.cancelDraft(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
       this.generation++; this.revision++; this.history.reset(this.snapshot());
+      this.clipboard = undefined;
       this.imageSessionId = uid("image-session");
-      this.tool = "select"; this.notice = "图片已载入，可继续编辑；点击「替换图片」后保存到任务。"; this.fit();
+      this.tool = "select"; this.notice = converted ? "已转为 JPG，透明区域以白色填充。可继续编辑；点击「替换图片」后保存到任务。" : "图片已载入，可继续编辑；点击「替换图片」后保存到任务。"; this.fit();
       return true;
     } catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.collect(); this.emit(); } }
@@ -1010,6 +1050,7 @@ export class EditorController {
     return { x: Math.max(0, Math.min(this.size.width, point.x)), y: Math.max(0, Math.min(this.size.height, point.y)) };
   }
   private pointerDown(event: TPointerEventInfo) {
+    this.clipboardFocus = true;
     this.finishPropertyEdit();
     if (this.colorPick && (event.e as MouseEvent).button === 0) {
       const point = this.canvas.getScenePoint(event.e);
@@ -1278,21 +1319,73 @@ export class EditorController {
     if (objects.length) this.notice = objects.length > 1 ? `已删除 ${objects.length} 个图层，可撤销` : "已删除图层，可撤销";
     this.commit();
   }
+  private copyableLayer() {
+    const selected = this.canvas.getActiveObjects();
+    return selected.length === 1 && selected[0].editorPurpose === "content" && selected[0].visible && !selected[0].editorLocked ? selected[0] : undefined;
+  }
+  contextSelectionAt(event?: MouseEvent, layerId?: string) {
+    if (!this.positionTarget() || (this.canvas.getActiveObject() instanceof Textbox && (this.canvas.getActiveObject() as Textbox).isEditing)) return;
+    const selected = this.canvas.getActiveObjects();
+    if (layerId && !selected.some(object => object.editorId === layerId)) return;
+    if (event) {
+      const target = this.canvas.findTarget(event).target;
+      if (!target || (target !== this.canvas.getActiveObject() && !selected.includes(target))) return;
+    }
+    this.finishPropertyEdit();
+    return selected.map(object => object.editorId!);
+  }
+  copySelected() {
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    this.finishPropertyEdit(); this.finishText();
+    const object = this.copyableLayer(); if (!object) return;
+    this.clipboard = { data: deepCopy(object.toObject(SERIALIZED_PROPS)) as ObjectData, offset: 0 };
+    this.notice = "已复制图层，可用 Ctrl+V 粘贴"; this.emit();
+  }
+  async pasteLayer() {
+    if (!this.clipboard || this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    this.finishPropertyEdit(); this.finishText();
+    const clipboard = this.clipboard;
+    if (await this.insertLayerCopy(clipboard.data, clipboard.offset + 20) && this.clipboard === clipboard) clipboard.offset += 20;
+  }
   async duplicateSelected() {
-    if (this.locked) return;
-    this.finishText(); const selected = this.canvas.getActiveObjects();
-    if (selected.length !== 1 || selected[0].editorPurpose === "base") return;
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    this.finishPropertyEdit(); this.finishText();
+    const object = this.copyableLayer(); if (!object) return;
+    await this.insertLayerCopy(object.toObject(SERIALIZED_PROPS) as ObjectData, 20);
+  }
+  private async insertLayerCopy(data: ObjectData, offset: number) {
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
     try {
-      const object = await selected[0].clone(SERIALIZED_PROPS);
-      if (this.disposed || token !== this.generation) return;
-      object.set({ editorId: uid("copy"), left: object.left + 20, top: object.top + 20, editorLocked: false, selectable: true, evented: true });
+      await ensureObjectFonts([data]);
+      const [object] = await util.enlivenObjects<FabricObject>([deepCopy(data)]);
+      if (this.disposed || token !== this.generation) { object.dispose(); return false; }
+      object.set({ editorId: uid("copy"), left: object.left + offset, top: object.top + offset, editorLocked: false, selectable: true, evented: true });
       if (!(object instanceof Textbox)) object.editorName = this.nextName(object instanceof Rect ? "矩形" : object instanceof Ellipse ? "椭圆" : "画笔");
+      this.tool = "select";
       this.canvas.add(object); this.canvas.setActiveObject(object);
+      this.syncSelectionWorkspace();
+      this.notice = "已创建图层副本，可继续编辑";
+      return true;
     } catch (error) { this.report(error); }
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.commit(); } }
+    return false;
   }
   private initialTextSize() { return Math.max(8, Math.min(500, Math.round(Math.min(this.size.width, this.size.height) * .05))); }
+  updateTextNumber(field: TextNumber, value: number) {
+    if (this.locked || this.gestureActive || !Number.isFinite(value)) return;
+    const object = this.canvas.getActiveObject();
+    const text = object instanceof Textbox ? object : undefined;
+    if (text?.editorLocked || (!text && (this.workspace !== "text" || this.canvas.getActiveObjects().length))) return;
+    const values = text ? textProperties(text) : { ...this.textDefaults };
+    if (field === "fontSize") {
+      values.charSpacing = values.charSpacing * values.fontSize / value;
+      this.automaticTextSize = false;
+    }
+    values[field] = field === "charSpacing" ? value / values.fontSize * 1000 : value;
+    if (text && !this.propertyEdit) { this.commit(); this.propertyEdit = true; }
+    if (text) applyTextProperties(text, values);
+    this.textDefaults = values; this.canvas.requestRenderAll(); this.emit();
+  }
   async updateText(values: TextProperties, explicitSize = false) {
     if (this.locked) return;
     const text = this.canvas.getActiveObject();
@@ -1687,6 +1780,13 @@ export class EditorController {
       event.preventDefault(); void this.undo(event.shiftKey);
     }
     if (command && event.key.toLowerCase() === "y") { event.preventDefault(); void this.undo(true); }
+    const target = event.target instanceof Element ? event.target : undefined;
+    const ownsClipboard = !!target && (this.viewport.contains(target) || !!this.viewport.closest(".app-shell")?.contains(target) ||
+      (target === document.body && this.clipboardFocus));
+    if (command && !event.altKey && !event.shiftKey && ownsClipboard) {
+      if (event.key.toLowerCase() === "c" && this.copyableLayer()) { event.preventDefault(); this.copySelected(); }
+      if (event.key.toLowerCase() === "v" && this.clipboard) { event.preventDefault(); void this.pasteLayer(); }
+    }
     if (command && event.key.toLowerCase() === "d") { event.preventDefault(); void this.duplicateSelected(); }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
@@ -1709,6 +1809,8 @@ export class EditorController {
     }
   };
   private windowPointerDown = (event: PointerEvent) => {
+    const target = event.target instanceof Element ? event.target : undefined;
+    this.clipboardFocus = !!target && (this.viewport.contains(target) || !!this.viewport.closest(".app-shell")?.contains(target));
     this.finishNudge();
     if (event.button === 0 && !this.gestureActive && event.target === this.canvas.upperCanvasEl) this.pointerId = event.pointerId;
   };
@@ -1739,6 +1841,7 @@ export class EditorController {
   private pageHide = (event: PageTransitionEvent) => { if (!event.persisted) this.finishEraseTelemetry("page_exit"); };
 
   dispose() {
+    this.clipboard = undefined; this.numberEdit = undefined;
     this.previewSubmission?.controller.abort(); this.previewSubmission = undefined; this.submissionRun++;
     this.finishEraseTelemetry("unmount");
     this.clearReplacementPreview();

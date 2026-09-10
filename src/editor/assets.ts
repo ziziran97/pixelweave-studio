@@ -1,4 +1,5 @@
 import { uid } from "./model";
+import { editorConfig } from "../config";
 
 export type ImageAsset = { id: string; blob: Blob; url: string; width: number; height: number; cost: number };
 export class Assets {
@@ -40,7 +41,7 @@ export async function defaultImage(preview = false) {
   ctx.fillStyle = "#2e76b8"; ctx.font = "700 52px Arial"; ctx.textAlign = "center";
   ctx.fillText("PixelWeave Studio", 640, 365);
   ctx.font = "24px Microsoft YaHei, sans-serif"; ctx.fillStyle = "#71879b";
-  ctx.fillText("本地预览 · 上传 JPG 或使用示例图片编辑", 640, 425);
+  ctx.fillText("本地预览 · 上传 JPG / PNG 或使用示例图片编辑", 640, 425);
   return toBlob(canvas);
 }
 
@@ -57,4 +58,30 @@ export async function validateJpeg(blob: Blob, name?: string) {
     if (!size.width || !size.height) throw new Error();
     return { jpeg, ...size };
   } catch { throw new Error("图片无法正常读取，请检查文件是否损坏"); }
+}
+
+/** Identify the encoded data, not the file extension or browser MIME label. */
+export async function prepareUploadedImage(file: Blob) {
+  const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) {
+    return { ...await validateJpeg(file), converted: false };
+  }
+  if (![137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => header[index] === byte)) {
+    throw new Error("暂不支持此图片格式，请选择 JPG 或 PNG 图片");
+  }
+  let bitmap: ImageBitmap;
+  try { bitmap = await createImageBitmap(new Blob([file], { type: "image/png" })); }
+  catch { throw new Error("图片无法正常读取，请检查文件是否损坏"); }
+  const canvas = document.createElement("canvas");
+  try {
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx || !canvas.width || !canvas.height) throw new Error();
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    const checked = await validateJpeg(await toBlob(canvas, "image/jpeg", editorConfig.jpegQuality));
+    if (checked.width !== bitmap.width || checked.height !== bitmap.height) throw new Error();
+    return { ...checked, converted: true };
+  } catch { throw new Error("图片转换失败，请重新选择图片后重试"); }
+  finally { bitmap.close(); canvas.width = canvas.height = 0; }
 }

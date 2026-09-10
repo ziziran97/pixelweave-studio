@@ -1,15 +1,15 @@
 import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
-import { NumberField } from "./TextPanel";
+import { NumberField } from "./NumberField";
 import { ColorField } from "./ColorField";
 import { PropertySlider } from "./PropertySlider";
 
 export function DrawingPanel({ view, engine, disabled }: { view: EditorView; engine: EditorController; disabled: boolean }) {
   const width = view.drawing?.width ?? view.drawSize;
-  const setWidth = (value: number) => view.drawing ? engine.updateDrawing({ width: value }) : engine.setDrawSize(value);
+  const setWidth = (value: number) => view.drawing ? engine.updateDrawing({ width: value }, false) : engine.setDrawSize(value);
   return <fieldset disabled={disabled}>
     <div className="shape-number-control drawing-width-control">
-      <NumberField label="画笔粗细" value={width} min={1} max={300} unit="px" cancelOnEscape onChange={setWidth} />
+      <NumberField engine={engine} label="画笔粗细" value={width} min={1} max={300} unit="px" cancelOnEscape onChange={setWidth} />
       <PropertySlider className="drawing-size" label="画笔粗细滑块" min={1} max={300} value={width}
         change={value => view.drawing ? engine.updateDrawing({ width: value }, false) : engine.setDrawSize(value)} commit={() => engine.finishPropertyEdit()} />
     </div>

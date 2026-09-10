@@ -57,7 +57,7 @@ export function EraserPanel({ view, engine, locked, execute }: {
     </div>
     <div className="toggle-grid"><button className={`mask-add ${view.maskOperation === "add" ? "selected" : ""}`} aria-pressed={view.maskOperation === "add"} onClick={() => engine?.setMaskOperation("add")}>＋ 添加选区</button><button disabled={!view.hasMask} className={`mask-subtract ${view.maskOperation === "subtract" ? "selected" : ""}`} aria-pressed={view.maskOperation === "subtract"} onClick={() => engine?.setMaskOperation("subtract")}>－ 减去选区</button></div>
     {view.maskOperation === "subtract" && <p className="erase-subtract-hint">从已有选区中减去无需消除的区域</p>}
-    {view.eraseMode === "brush" && <BrushSizeControl value={view.brushSize} disabled={locked || view.unfinishedSelection} change={value => engine?.setBrushSize(value)} />}
+    {view.eraseMode === "brush" && <BrushSizeControl engine={engine ?? undefined} value={view.brushSize} disabled={locked || view.unfinishedSelection} change={value => engine?.setBrushSize(value)} />}
     <button type="button" className="mask-peek" disabled={locked || !view.hasMask || view.unfinishedSelection}
       aria-label="按住隐藏选区" title="临时隐藏选区遮罩，不会清空选区" aria-pressed={view.maskHidden}
       onPointerDown={event => { if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); engine?.setMaskHidden(true); }}
