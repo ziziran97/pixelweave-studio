@@ -1,4 +1,6 @@
 import { checkColorEditing } from "./color-editing";
+import { checkEraseTelemetry } from "./erase-telemetry";
+import { checkEditingImprovements } from "./editing-improvements";
 import { checkGrayMasks } from "./mask-png-checks";
 import { checkMaskCancellation } from "./mask-cancellation";
 import { checkPositioning } from "./positioning";
@@ -30,6 +32,8 @@ async function pixels(blob: Blob) {
 }
 const assets = new Assets();
 try {
+  await checkEraseTelemetry(check);
+  await checkEditingImprovements(check);
   const source = document.createElement("canvas"); source.width = 512; source.height = 256;
   const ctx = source.getContext("2d")!; ctx.fillStyle = "#123456"; ctx.fillRect(0, 0, 512, 256);
   const asset = await assets.add(await toBlob(source));

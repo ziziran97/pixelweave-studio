@@ -75,6 +75,19 @@ try {
   button("滤镜：柔和").click(); await paint(); action("重置调色", host).click(); await paint();
   check(number("色温").value === "0" && button("滤镜：无滤镜").getAttribute("aria-pressed") === "true", "重置调色一起清除基础、叠加与滤镜");
   await undo(); check(number("色温").value === "35" && button("滤镜：柔和").getAttribute("aria-pressed") === "true", "一次撤销恢复重置前整套调色");
+  button("重置色温").click(); await paint();
+  check(number("色温").value === "0" && button("滤镜：柔和").getAttribute("aria-pressed") === "true", "单项复位仅恢复对应参数，不清除滤镜");
+  await undo(); check(number("色温").value === "35", "单项复位可以一步撤销");
+  const beforeCompare = host.querySelector<HTMLInputElement>('input[aria-label="色温"]')!.value;
+  const hold = button("按住查看调色前"); hold.focus();
+  for (const finish of ["keyup", "blur", "hidden"] as const) {
+    hold.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); await paint();
+    check(hold.getAttribute("aria-pressed") === "true" && !hold.disabled && number("色温").matches(":disabled"), `调色前按住查看生效且保持入口可松开（${finish}）`);
+    if (finish === "keyup") window.dispatchEvent(new KeyboardEvent("keyup", { key: " " }));
+    else if (finish === "blur") window.dispatchEvent(new Event("blur"));
+    else { Object.defineProperty(document, "hidden", { configurable: true, value: true }); document.dispatchEvent(new Event("visibilitychange")); delete (document as unknown as { hidden?: boolean }).hidden; }
+    await paint(); check(hold.getAttribute("aria-pressed") === "false" && number("色温").value === beforeCompare, `松开或离开页面恢复调色且参数不变（${finish}）`);
+  }
   host.style.width = "1000px"; host.style.height = "600px"; await paint();
   check(panel().scrollWidth <= panel().clientWidth && [...panel().querySelectorAll('input, .filter-option')].every(item => item.getBoundingClientRect().right <= panel().getBoundingClientRect().right + 1), "紧凑布局的数字控件和滤镜无横向溢出");
   const scroll = host.querySelector<HTMLElement>('.panel-content')!; scroll.scrollTop = scroll.scrollHeight; await paint();

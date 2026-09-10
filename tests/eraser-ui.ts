@@ -153,11 +153,14 @@ try {
   }
   const result = { assetId: "fixture", beforeUrl: urls[0], afterUrl: urls[1], documentId: "fixture", revision: 0, region: { x: 80, y: 70, width: 120, height: 40 } };
   let accepted = 0, discarded = 0, regenerated = 0;
+  const previewSignals: Array<{ outcome: string; attempt: number }> = [];
   const show = (busy = false, key = "check", acceptError?: string, changes: Partial<PendingResult> = {}) => root.render(createElement(ResultPreview, { key, result: { ...result, acceptError, ...changes }, size, busy,
-    accept: () => { accepted++; root.render(null); }, discard: () => { discarded++; root.render(null); }, retryPreview: () => { regenerated++; } }));
+    accept: () => { accepted++; root.render(null); }, discard: () => { discarded++; root.render(null); }, retryPreview: () => { regenerated++; },
+    onPreviewState: (outcome, attempt) => { previewSignals.push({ outcome, attempt }); } }));
   show();
   await settle(() => !!host.querySelector<HTMLButtonElement>(".result-footer .primary-button") && !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
   const images = () => [...host.querySelectorAll<HTMLImageElement>(".result-images img")];
+  check(previewSignals.some(signal => signal.outcome === "shown" && signal.attempt === 0), "两张预览实际加载成功后通知埋点入口");
   const aligned = () => images()[0].style.cssText === images()[1].style.cssText;
   const pane = () => host.querySelector<HTMLDivElement>(".result-viewport")!;
   check(aligned() && parseFloat(images()[0].style.width) <= pane().clientWidth + 1, "初始左右适配显示且保持同一位置");
@@ -194,10 +197,12 @@ try {
   check(!!host.querySelector("dialog [role=alert]") && host.querySelector(".result-footer .primary-button")!.textContent === "重试使用结果", "采用失败在弹窗内显示错误并提供重试入口");
   const oldImages = images(), sources = oldImages.map(image => image.src);
   images()[1].dispatchEvent(new Event("error")); await paint();
+  check(previewSignals.at(-1)?.outcome === "failed", "预览图片加载错误通知失败，不冒充算法失败");
   check(host.textContent!.includes("消除结果已保留") && host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled, "预览失败保留结果并禁止采用未加载图片");
   host.querySelector<HTMLButtonElement>(".result-recovery button")!.click(); await paint();
   await settle(() => !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
   oldImages[1].dispatchEvent(new Event("error")); await paint();
+  check(previewSignals.at(-1)?.outcome === "shown" && previewSignals.at(-1)?.attempt === 1, "重新加载成功后报告当前尝试，旧图片事件不反写埋点");
   check(images().every((image, index) => image !== oldImages[index] && image.src === sources[index]) && !host.querySelector(".result-recovery") && accepted === 0 && discarded === 0,
     "重新加载沿用原预览地址，旧图片事件不干扰重试且不采用或放弃结果");
   images()[0].dispatchEvent(new Event("error")); await paint();

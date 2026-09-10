@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, RotateCcw } from "lucide-react";
+import { ChevronRight, RotateCcw, Columns2 } from "lucide-react";
 import type { EditorController } from "../editor/EditorController";
-import { filterThumbnails, IMAGE_FILTERS } from "../editor/adjustments";
+import { adjustmentFilters, filterThumbnails, IMAGE_FILTERS } from "../editor/adjustments";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import type { EditorView, ImageAdjustments, ImageFilter } from "../types";
 import { NumberField } from "./TextPanel";
 import { PropertySlider } from "./PropertySlider";
 import { ColorField } from "./ColorField";
+import { ActionButton } from "./ActionButton";
+import { HoldPreviewButton } from "./OriginalPreviewButton";
 
 const BASICS = [
   { key: "brightness", label: "亮度", min: -100 }, { key: "contrast", label: "对比度", min: -100 },
@@ -34,11 +36,18 @@ export function AdjustmentsPanel({ view, engine, disabled }: { view: EditorView;
   const update = (patch: Partial<ImageAdjustments>, commit = true) => engine.setAdjustments({ ...values, ...patch }, commit);
   const control = (key: "brightness" | "contrast" | "saturation" | "temperature" | "sharpen" | "overlayStrength" | "filterStrength", label: string, min = 0, unit?: string) =>
     <div className="shape-number-control adjustment-control" key={key}>
+      <div className="adjustment-number-row">
       <NumberField label={label} value={values[key]} min={min} max={100} unit={unit} cancelOnEscape onChange={value => update({ [key]: value })} />
+      <ActionButton floating className="adjustment-single-reset" hint={`恢复${label}为 ${DEFAULT_ADJUSTMENTS[key]}${unit ?? ""}`} aria-label={`重置${label}`} disabled={values[key] === DEFAULT_ADJUSTMENTS[key]} onClick={() => update({ [key]: DEFAULT_ADJUSTMENTS[key] })}><RotateCcw size={14} /></ActionButton>
+      </div>
       <PropertySlider label={`${label}滑块`} min={min} max={100} value={values[key]} change={value => update({ [key]: value }, false)} commit={() => engine.finishPropertyEdit()} />
       {key === "temperature" && <div className="temperature-guide" aria-hidden="true"><span>冷</span><span>暖</span></div>}
     </div>;
-  return <fieldset disabled={disabled} className="adjustment-panel">
+  return <div className="adjustment-panel">
+    <HoldPreviewButton floating className="secondary-button full adjustment-compare" label="按住查看调色前" active={!!view.compareAdjustments}
+      disabled={(!view.compareAdjustments && disabled) || view.unfinishedSelection || !adjustmentFilters(values).length}
+      change={value => engine.setCompareAdjustments(value)}><Columns2 size={16} />按住查看调色前</HoldPreviewButton>
+    <fieldset disabled={disabled}>
     <p className="field-help adjustment-scope">仅调整底图，新增文字和绘制内容保持不变。</p>
     <section aria-label="基础调节"><h3>基础调节</h3>
       {BASICS.map(item => control(item.key, item.label, item.min))}
@@ -62,5 +71,6 @@ export function AdjustmentsPanel({ view, engine, disabled }: { view: EditorView;
       <button type="button" className="secondary-button full" disabled={values.overlayStrength === 0} onClick={() => update({ overlayStrength: 0 })}>取消叠加</button>
     </details>
     <button type="button" className="secondary-button full adjustment-reset" disabled={JSON.stringify(values) === JSON.stringify(DEFAULT_ADJUSTMENTS)} onClick={() => engine.setAdjustments(DEFAULT_ADJUSTMENTS, true)}><RotateCcw size={15} />重置调色</button>
-  </fieldset>;
+    </fieldset>
+  </div>;
 }

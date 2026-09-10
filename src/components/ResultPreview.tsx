@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Focus, Scan, ZoomIn, ZoomOut } from "lucide-react";
+import { Crosshair, ScanSquare, ZoomIn, ZoomOut } from "lucide-react";
 import type { DocumentSize, PendingResult } from "../types";
+import { ActionButton } from "./ActionButton";
 
 type Camera = { zoom: number | null; x: number; y: number };
 
-export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview }: {
+export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview, onPreviewState }: {
   result: PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean; accept: () => void; discard: () => void; retryPreview: () => void;
+  onPreviewState?: (outcome: "shown" | "failed", loadAttempt: number) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const panes = useRef<Array<HTMLDivElement | null>>([]);
@@ -26,6 +28,11 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
   const minZoom = Math.min(.03, fitZoom), maxZoom = 4;
   const zoom = camera.zoom ?? fitZoom;
   const ready = !!result.beforeUrl && !!result.afterUrl && loaded.every(Boolean) && !loadError && !result.previewError && !result.previewPreparing && bounds.width > 1;
+  useEffect(() => {
+    if (suspended) return;
+    if (ready) onPreviewState?.("shown", loadAttempt);
+    else if (loadError) onPreviewState?.("failed", loadAttempt);
+  }, [ready, loadError, suspended, loadAttempt, onPreviewState]);
 
   // One camera in image coordinates keeps both views aligned at every zoom level.
   const constrain = (value: Camera, scale: number) => {
@@ -101,12 +108,13 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
     <div className="result-view-tools">
       <span>滚轮缩放，拖动查看；两侧同步</span>
       <div role="group" aria-label="结果查看">
-        <button disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" title="定位本轮选区及周边，左右同步" onClick={focusRegion}><Focus size={16} />消除区域</button>
-        <button aria-label="缩小对比图片" title="缩小" disabled={busy || !ready || zoom <= minZoom} onClick={() => changeZoom(1 / 1.25)}><ZoomOut size={16} /></button>
+        <ActionButton aria-label="缩小对比图片" hint="缩小" disabled={busy || !ready || zoom <= minZoom} onClick={() => changeZoom(1 / 1.25)}><ZoomOut /></ActionButton>
         <output aria-label="对比缩放比例">{ready ? `${Math.round(zoom * 100)}%` : "—"}</output>
-        <button aria-label="放大对比图片" title="放大" disabled={busy || !ready || zoom >= maxZoom} onClick={() => changeZoom(1.25)}><ZoomIn size={16} /></button>
-        <button disabled={busy || !ready} aria-label="100% 查看对比图片" title="按图片实际尺寸查看" onClick={() => changeZoom("actual")}>100%</button>
-        <button disabled={busy || !ready} aria-label="适配对比图片" onClick={fit}><Scan size={16} />适配</button>
+        <ActionButton aria-label="放大对比图片" hint="放大" disabled={busy || !ready || zoom >= maxZoom} onClick={() => changeZoom(1.25)}><ZoomIn /></ActionButton>
+        <ActionButton className="actual-size" disabled={busy || !ready} aria-label="100% 查看对比图片" hint="以 100% 比例查看图片细节" onClick={() => changeZoom("actual")}>100%</ActionButton>
+        <ActionButton disabled={busy || !ready} aria-label="适配对比图片" hint="完整显示图片并居中" onClick={fit}><ScanSquare /></ActionButton>
+        <span className="result-region-divider" aria-hidden="true" />
+        <ActionButton disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" hint="定位本轮选区及周边，左右同步" onClick={focusRegion}><Crosshair />消除区域</ActionButton>
       </div>
     </div>
     <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={index}>

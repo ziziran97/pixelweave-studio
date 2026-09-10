@@ -117,7 +117,9 @@ export type PendingResult = {
   previewError?: string; previewPreparing?: boolean; region?: ImageRegion;
 };
 export type ConfirmationKind = "replace" | "reset" | "upload" | "close" | "switch";
-export type EditorConfirmation = { id: string; kind: ConfirmationKind };
+export type EditorConfirmation = { id: string; kind: ConfirmationKind;
+  preview?: { status: "loading" | "ready" | "error"; url?: string; error?: string };
+};
 export type EditorView = {
   confirmation?: EditorConfirmation;
   ready: boolean; busy: boolean; task: boolean; notice: string;
@@ -131,6 +133,8 @@ export type EditorView = {
   shape: ShapeProperties; shapeKind?: "rect" | "circle"; drawing?: { color: string; width: number };
   shapeRadiusMax?: number;
   picking: boolean; colorEditing: boolean; submitting: boolean; submissionStage: string; needsConfirmation: boolean; saved: boolean; closed: boolean;
+  submissionProgress?: import("./editor/submissionProgress").SubmissionProgress;
+  previewScenario?: import("./editor/previewReplacement").PreviewReplacementScenario;
   canSubmit: boolean; canUpload: boolean;
   problemObjectId?: string;
   problemObjectIds?: string[];
@@ -140,5 +144,5 @@ export type EditorView = {
   hasMask: boolean; maskHidden: boolean;
   unfinishedSelection: boolean; canUndo: boolean; canRedo: boolean; dirty: boolean;
   adjustments: ImageAdjustments; pending?: PendingResult;
-  originalUrl?: string; compareOriginal: boolean;
+  originalUrl?: string; compareOriginal: boolean; compareAdjustments?: boolean;
 };

@@ -38,7 +38,7 @@ export function TextPanel({ text, engine, disabled, selected, editing, vertical,
   text: TextProperties; engine: EditorController; disabled: boolean; selected: boolean;
   editing?: boolean; vertical?: boolean; error?: string; fontError?: string;
 }) {
-  const update = (patch: Partial<TextProperties>) => void engine.updateText({ ...text, ...patch });
+  const update = (patch: Partial<TextProperties>) => void engine.updateText({ ...text, ...patch }, "fontSize" in patch);
   const weight = fontWeight(text.fontWeight, text.fontFamily);
   const family = fontDefinition(text.fontFamily) ?? FONT_FAMILIES[0];
   const italic = supportsItalic(text.fontFamily, weight);

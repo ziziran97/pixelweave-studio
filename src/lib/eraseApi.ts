@@ -1,3 +1,5 @@
+import type { EraseTelemetryDetails } from "../telemetry";
+
 export function dataUrlToBlob(dataUrl: string) {
   const comma = dataUrl.indexOf(","), meta = dataUrl.slice(0, comma), payload = dataUrl.slice(comma + 1);
   if (comma < 0 || !meta.includes(";base64")) throw new Error("图片数据必须是 base64 Data URL");
@@ -33,6 +35,8 @@ export type EraseRequest = {
   apiUrl: string; image: Blob; mask: Blob;
   width: number; height: number;
   documentId: string; revision: number; signal: AbortSignal;
+  requestId?: string;
+  onResponse?: (details: EraseTelemetryDetails) => void;
 };
 
 const errorMessages = {
@@ -45,6 +49,37 @@ const errorMessages = {
   invalid: "消除服务返回的图片无效，请稍后重试",
   unknown: "消除请求失败，请稍后重试",
 };
+
+/** Stable categories only; raw server messages, URLs and transport errors never enter telemetry. */
+export function eraseFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const categories = new Map<string, string>([
+    [errorMessages.size, "IMAGE_TOO_LARGE"], [errorMessages.mask, "INVALID_MASK"],
+    [errorMessages.busy, "SERVICE_BUSY"], [errorMessages.unavailable, "SERVICE_UNAVAILABLE"],
+    [errorMessages.network, "CONNECTION_FAILED"], [errorMessages.timeout, "PROCESSING_TIMEOUT"],
+    [errorMessages.invalid, "INVALID_RESULT"], ["消除服务返回的数据无效，请稍后重试", "INVALID_RESULT"],
+    ["消除结果图片无法读取，请稍后重试", "INVALID_RESULT"], ["消除结果尺寸与当前图片不一致，未采用，请稍后重试", "RESULT_SIZE_MISMATCH"],
+    ["消除服务鉴权失败，请检查本地账号和密钥", "AUTH_FAILED"], ["排队等待超时，请稍后重试", "QUEUE_TIMEOUT"],
+    ["请先填写本地消除服务账号和密钥，再重启生产测试服务", "CREDENTIALS_MISSING"],
+    ["消除服务本地配置无效，请检查配置后重启服务", "CONFIG_INVALID"],
+  ]);
+  return categories.get(message) ?? "REQUEST_FAILED";
+}
+
+function responseDetails(response: Response): EraseTelemetryDetails {
+  const text = (name: string) => {
+    const value = response.headers?.get(name)?.trim();
+    return value && /^[A-Za-z0-9_.+-]{1,128}$/.test(value) ? value : undefined;
+  };
+  const number = (name: string) => {
+    const value = response.headers?.get(name)?.trim();
+    return value && /^\d+(\.\d+)?$/.test(value) && Number.isFinite(Number(value)) ? Number(value) : undefined;
+  };
+  const values: EraseTelemetryDetails = { httpStatus: response.status,
+    serverRequestId: text("x-request-id"), algorithmVersion: text("x-algorithm-version"),
+    queueWaitMs: number("x-queue-wait-ms"), inferenceMs: number("x-inference-ms"), serverTotalMs: number("x-total-ms") };
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
 
 // Business-backend aliases belong here; never display raw backend messages or HTML.
 const errorCodes = new Map<string, string>([
@@ -101,8 +136,10 @@ async function requestErase(input: EraseRequest) {
   form.append("mask", input.mask, "mask.png");
   form.append("metadata", JSON.stringify({ schemaVersion: 1, mode: "erase", target: "base",
     width: input.width, height: input.height, documentId: input.documentId, revision: input.revision,
+    ...(input.requestId ? { requestId: input.requestId } : {}),
     coordinateSystem: "0-1000", bboxOrder: "ymin,xmin,ymax,xmax" }));
   const response = await fetch(input.apiUrl, { method: "POST", body: form, signal: input.signal });
+  try { Promise.resolve(input.onResponse?.(responseDetails(response))).catch(() => {}); } catch { /* Observers cannot change the request outcome. */ }
   if (!response.ok) {
     throw new Error(await responseError(response));
   }

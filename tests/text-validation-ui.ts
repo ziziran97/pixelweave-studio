@@ -36,6 +36,7 @@ try {
   check(calls === 0, "实际确认弹窗出现前后均未提前请求违禁词接口");
   check(!host.querySelector(".preview-label") && host.querySelector(".confirmation-dialog")!.textContent!.includes("替换后无法恢复"), "真实宿主优先，不显示演示标识或覆盖正式确认说明");
   check(!host.textContent!.includes("不能包含中文"), "文字面板不再显示汉字语言限制提示");
+  await settle(() => host.querySelector<HTMLButtonElement>('.confirmation-dialog .primary-button')?.disabled === false);
   host.querySelector<HTMLButtonElement>('.confirmation-dialog .primary-button')!.click();
   await settle(() => host.querySelectorAll('.has-problem').length === 2);
   check(calls === 2 && saves === 0 && !!button("展开图层"), "不同文案分别检测，命中多图层仍保留收起状态且未调用保存");

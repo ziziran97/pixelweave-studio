@@ -113,8 +113,9 @@ export function createEditor(integration?: EditorIntegration, preview = false) {
     }));
   };
   return { editor, state: () => view, overlay, mouse,
-    confirm: <T>(run: () => Promise<T>, accepted = true) => {
+    confirm: async <T>(run: () => Promise<T>, accepted = true) => {
       const done = run();
+      if (accepted && view.confirmation?.kind === "replace") await settle(() => view.confirmation?.preview?.status === "ready");
       if (view.confirmation) editor.answerConfirmation(view.confirmation.id, accepted);
       return done;
     },

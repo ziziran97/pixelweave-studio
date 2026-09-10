@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentType, SVGProps } from "react";
-import { Brush, CircleHelp, Eraser, PanelLeftClose, RotateCcwSquare, Hand, ImagePlus, Layers3, Minus, MousePointer2, Plus, Redo2, Save, ScanSquare, SlidersHorizontal, Type, X, Undo2 } from "lucide-react";
+import { Brush, CircleHelp, Eraser, PanelLeftClose, RotateCcwSquare, Hand, ImagePlus, Layers3, ZoomOut, MousePointer2, ZoomIn, Redo2, Save, ScanSquare, SlidersHorizontal, Type, X, Undo2 } from "lucide-react";
 import { EditorController } from "./editor/EditorController";
 import { validatePreviewTexts } from "./editor/previewTextValidation";
+import { previewReplacement } from "./editor/previewReplacement";
 import { DEFAULT_ADJUSTMENTS } from "./types";
 import type { EditorView, ToolId } from "./types";
 import { DEFAULT_SHAPE } from "./editor/shape";
@@ -61,12 +62,16 @@ export default function App({ integration, preview = false }: { integration?: Ed
       if (cancelled || !canvasRef.current || !overlayRef.current || !viewportRef.current) return;
       controller = new EditorController(canvasRef.current, overlayRef.current, viewportRef.current, setView, integration, previewOnly);
       setEngine(controller);
-      void controller.initialize().then(() => { if (!cancelled) controller?.setTool("erase"); });
+      void controller.initialize().then(() => {
+        if (cancelled) return;
+        controller?.setTool("erase");
+        if (previewOnly && previewReplacement) controller?.setPreviewScenario(previewReplacement.normalize(new URLSearchParams(window.location.search).get("replacement-demo")));
+      });
     });
     return () => { cancelled = true; controller?.dispose(); };
   }, [integration, previewOnly]);
-  const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
-  const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking;
+  const locked = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.compareOriginal || !!view.compareAdjustments || view.colorEditing || view.picking || view.submitting || view.saved || view.closed;
+  const compareDisabled = !view.ready || !!view.confirmation || view.busy || view.task || !!view.pending || view.unfinishedSelection || view.submitting || view.saved || view.colorEditing || view.picking || !!view.compareAdjustments;
   const execute = () => { void engine?.executeErase(); };
   const panelKind = view.workspace;
   const changeSettings = (open: boolean) => {
@@ -112,7 +117,10 @@ export default function App({ integration, preview = false }: { integration?: Ed
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable</small>}</span></div>
+      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable</small>}</span>
+        {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "texts"}
+          onChange={event => engine?.setPreviewScenario(event.target.value)}>{previewReplacement.scenarios.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
+      </div>
       <div className="top-actions" role="group" aria-label="编辑与对比">
         <ActionButton below className="icon-button" aria-label="撤销" hint="撤销 Ctrl+Z" disabled={!view.canUndo} onClick={() => void engine?.undo()}><Undo2 /></ActionButton>
         <ActionButton below className="icon-button" aria-label="重做" hint="重做 Ctrl+Shift+Z" disabled={!view.canRedo} onClick={() => void engine?.undo(true)}><Redo2 /></ActionButton>
@@ -153,6 +161,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
           {view.picking && <div className="picking-hint" role="status">点击图片取色<button onClick={() => engine?.cancelColorPick()}>取消</button></div>}
           {!view.picking && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} locateProblem={locked ? undefined : locateProblem} />}
           {view.compareOriginal && <span className="original-badge">正在查看原图 · 松开返回编辑</span>}
+          {view.compareAdjustments && <span className="original-badge">正在查看调色前 · 松开返回编辑</span>}
           <div className="canvas-controls">
           <div className="zoom-control" role="group" aria-label="画布操作">
             <div className="canvas-mode-controls" role="group" aria-label="画布模式">
@@ -160,8 +169,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
               <ActionButton hint="拖动画布；按住空格可临时平移" aria-label="平移" aria-pressed={view.tool === "pan"} disabled={locked} onClick={() => engine?.setTool("pan")}><Hand /></ActionButton>
             </div>
             <div className="canvas-zoom-controls" role="group" aria-label="缩放查看">
-              <ActionButton hint={view.zoom <= 0.03 ? "已缩小至最小比例 3%" : "缩小"} aria-label="缩小" disabled={view.zoom <= 0.03} onClick={() => engine?.zoomTo(view.zoom / 1.2)}><Minus /></ActionButton><output aria-label="当前缩放比例">{Math.round(view.zoom * 100)}%</output>
-              <ActionButton hint={view.zoom >= 4 ? "已放大至最大比例 400%" : "放大"} aria-label="放大" disabled={view.zoom >= 4} onClick={() => engine?.zoomTo(view.zoom * 1.2)}><Plus /></ActionButton>
+              <ActionButton hint={view.zoom <= 0.03 ? "已缩小至最小比例 3%" : "缩小"} aria-label="缩小" disabled={view.zoom <= 0.03} onClick={() => engine?.zoomTo(view.zoom / 1.2)}><ZoomOut /></ActionButton><output aria-label="当前缩放比例">{Math.round(view.zoom * 100)}%</output>
+              <ActionButton hint={view.zoom >= 4 ? "已放大至最大比例 400%" : "放大"} aria-label="放大" disabled={view.zoom >= 4} onClick={() => engine?.zoomTo(view.zoom * 1.2)}><ZoomIn /></ActionButton>
               <ActionButton className="actual-size" hint="以 100% 比例查看图片细节" aria-label="100% 查看" onClick={() => engine?.zoomTo(1)}>100%</ActionButton>
               <ActionButton hint="完整显示图片并居中" aria-label="适配画布" onClick={() => engine?.fit()}><ScanSquare /></ActionButton>
             </div>
@@ -180,8 +189,9 @@ export default function App({ integration, preview = false }: { integration?: Ed
     </main>
     <input ref={fileRef} type="file" accept=".jpg,.jpeg" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
     {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} previewOnly={previewOnly} />}
-    {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} retryPreview={() => void engine?.retryResultPreview()} />}
-    {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
+    {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} retryPreview={() => void engine?.retryResultPreview()}
+      onPreviewState={(outcome, attempt) => engine?.reportErasePreview(view.pending!.assetId, view.pending!.beforeUrl, view.pending!.afterUrl, outcome, attempt)} />}
+    {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} retryPreview={id => void engine.retryReplacementPreview(id)} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
     {helpOpen && <ShortcutHelp close={() => setHelpOpen(false)} />}
   </div>;
 }

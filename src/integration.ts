@@ -1,3 +1,5 @@
+import type { EraseTelemetryOptions } from "./telemetry";
+export type { EraseTelemetryEvent, EraseTelemetryOptions } from "./telemetry";
 /** Host adapter. The host owns authorization, detection, durable saving and review refresh. */
 export type ImageContext = { taskId: string; imageId: string; baseRecordId?: string };
 export type AddedText = { id: string; text: string };
@@ -44,11 +46,16 @@ export type ReplacementInput = {
   submissionId: string; context: ImageContext; image: Blob; width: number; height: number;
   source: "online" | "upload"; texts: AddedText[];
 };
+/** Real backend stages; callers without stage information may keep reporting a plain message. */
+export type ReplacementStage = "person" | "ocr" | "image_text" | "marking" | "saving";
+export type ReplacementProgress = { stage: ReplacementStage; message?: string };
 export type EditorIntegration = {
+  /** Optional metadata-only receiver. Host owns transport, deduplication and aggregation. */
+  telemetry?: EraseTelemetryOptions;
   initialImage: Blob | string;
   context: ImageContext;
   validateTexts: (texts: AddedText[], context: ImageContext) => Promise<TextCheck>;
-  replace: (input: ReplacementInput, progress: (message: string) => void) => Promise<ReplaceOutcome>;
+  replace: (input: ReplacementInput, progress: (value: string | ReplacementProgress) => void) => Promise<ReplaceOutcome>;
   confirmResult: (submissionId: string, context: ImageContext) => Promise<ReplaceOutcome>;
   onClose: (result: { reason: "discard" } | { reason: "saved"; recordId: string }) => void | Promise<void>;
 };

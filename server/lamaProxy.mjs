@@ -68,9 +68,14 @@ export function createLamaProxy({ apiUrl, username, apiKey, timeoutMs = 180000 }
       if (image.size > FILE_LIMIT || mask.size > FILE_LIMIT) { reply(res, 413, "IMAGE_TOO_LARGE"); return; }
       const form = new FormData();
       form.append("image", image, "image.jpg"); form.append("mask", mask, "mask.png");
+      let requestId = randomUUID();
+      try {
+        const value = JSON.parse(input.get("metadata") || "{}").requestId;
+        if (typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value)) requestId = value;
+      } catch { /* Legacy metadata is optional and is never forwarded. */ }
       controller.signal.throwIfAborted();
       const upstream = await fetch(target, { method: "POST", body: form, redirect: "error", signal: controller.signal,
-        headers: { Authorization: `Basic ${Buffer.from(`${username}:${apiKey}`).toString("base64")}`, "X-Request-Id": randomUUID() } });
+        headers: { Authorization: `Basic ${Buffer.from(`${username}:${apiKey}`).toString("base64")}`, "X-Request-Id": requestId } });
       const type = upstream.headers.get("content-type") || "application/octet-stream";
       if (upstream.ok && type.split(";")[0].trim().toLowerCase() !== "image/jpeg") {
         await upstream.body?.cancel(); reply(res, 502, "LAMA_INVALID_RESPONSE"); return;
@@ -78,7 +83,8 @@ export function createLamaProxy({ apiUrl, username, apiKey, timeoutMs = 180000 }
       res.statusCode = upstream.status;
       res.setHeader("content-type", upstream.ok ? "image/jpeg" : type.includes("json") ? "application/json" : "text/plain");
       res.setHeader("cache-control", "no-store");
-      for (const name of ["x-request-id", "x-queue-wait-ms", "x-inference-ms", "x-total-ms", "x-image-width", "x-image-height", "retry-after"]) {
+      res.setHeader("x-request-id", requestId);
+      for (const name of ["x-request-id", "x-algorithm-version", "x-queue-wait-ms", "x-inference-ms", "x-total-ms", "x-image-width", "x-image-height", "retry-after"]) {
         if (upstream.headers.has(name)) res.setHeader(name, upstream.headers.get(name));
       }
       if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), res);

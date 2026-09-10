@@ -226,6 +226,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 5200));
   check(!host.querySelector(".eraser-notice"), "普通操作反馈会自动收起");
   host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click(); await settle(() => !!host.querySelector(".confirmation-dialog[open]"));
+  await settle(() => host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")?.disabled === false);
   host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")!.click();
   await settle(() => !host.querySelector(".submission-dialog") && !!host.querySelector(".eraser-notice"));
   await new Promise(resolve => setTimeout(resolve, 5200));
