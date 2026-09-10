@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpToLine, ArrowDownToLine, AlignHorizontalJustifyCenter, AlignVerticalJustifyCenter, Eye, EyeOff, Image, Layers3, Lock, Unlock, Trash2, Type, RectangleHorizontal, Circle, Brush, Copy } from "lucide-react";
 import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
@@ -14,6 +14,22 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
   const ids = view.layers.map(layer => layer.id);
   const orderKey = JSON.stringify(ids);
   const selectionKey = JSON.stringify(view.layers.filter(layer => layer.selected).map(layer => layer.id));
+  const previousInspectionRequest = useRef<typeof locate>(undefined);
+  const [problemInspection, setProblemInspection] = useState<{ id: string; selectionKey: string }>();
+  const locatedLayer = view.layers.find(layer => layer.id === locate?.id);
+  const canInspectProblem = !!locatedLayer && !locatedLayer.selected &&
+    (view.problemObjectId === locatedLayer.id || !!view.problemObjectIds?.includes(locatedLayer.id));
+  useLayoutEffect(() => {
+    // Locating is a one-time inspection request, not a permanent detail anchor.
+    // Keep the navigation cursor in App so dismissing details does not reset cycling.
+    const previous = previousInspectionRequest.current;
+    previousInspectionRequest.current = locate;
+    if (locate?.id !== previous?.id || locate?.request !== previous?.request) {
+      setProblemInspection(locate && canInspectProblem ? { id: locate.id, selectionKey } : undefined);
+    } else {
+      setProblemInspection(current => current && canInspectProblem && current.selectionKey === selectionKey ? current : undefined);
+    }
+  }, [locate, selectionKey, canInspectProblem]);
   useLayoutEffect(() => {
     const added = ids.find(id => !previousIds.current.includes(id));
     previousIds.current = ids;
@@ -44,9 +60,9 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate }: 
         const Icon = layer.role === "image" ? Image : layer.role === "text" ? Type : layer.kind === "rect" ? RectangleHorizontal : layer.kind === "ellipse" ? Circle : Brush;
         const status = [problem && "文案需修改", base && "底图 · 固定", !layer.visible && "已隐藏", layer.locked && !base && "已锁定", layer.transparent && "完全透明"].filter(Boolean).join(" · ");
         const reason = base ? "底图固定，不可选择" : !layer.visible && layer.locked ? "显示并解锁后可编辑" : !layer.visible ? "显示后可编辑" : layer.locked ? "解锁后可编辑" : undefined;
-        const showProblemDetails = problem && locate?.id === layer.id && !layer.selected;
+        const showProblemDetails = problem && problemInspection?.id === layer.id && problemInspection.selectionKey === selectionKey && !layer.selected;
         return <div key={layer.id} tabIndex={-1} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}${showProblemDetails ? " inspecting-problem" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
-          <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => engine?.selectLayer(layer.id)} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
+          <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => { setProblemInspection(undefined); engine?.selectLayer(layer.id); }} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
             <span className={`layer-thumb role-${layer.role}`}>
               {layer.thumbnailUrl ? <img src={layer.thumbnailUrl} alt="" /> : <Icon aria-hidden="true" />}
               {!base && layer.color && <span className="layer-color" style={{ backgroundColor: layer.color }} aria-label={`颜色 ${layer.color}`} />}

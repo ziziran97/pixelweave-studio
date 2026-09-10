@@ -14,6 +14,7 @@ import { TextPanel } from "./components/TextPanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { ResultPreview } from "./components/ResultPreview";
 import { EraserPanel } from "./components/EraserPanel";
+import { EraseExampleEntry } from "./components/EraseExampleEntry";
 import { EraserNotice } from "./components/EraserNotice";
 import { ActionButton } from "./components/ActionButton";
 import { OriginalPreviewButton } from "./components/OriginalPreviewButton";
@@ -117,8 +118,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable</small>}</span>
-        {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "texts"}
+      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable、supreme（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable、supreme</small>}</span>
+        {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "success"}
           onChange={event => engine?.setPreviewScenario(event.target.value)}>{previewReplacement.scenarios.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
       </div>
       <div className="top-actions" role="group" aria-label="编辑与对比">
@@ -149,6 +150,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
           </div>
             : panelKind === "erase" ? <>
               <EraserPanel view={view} engine={engine} locked={locked} execute={execute} />
+              {previewOnly && <EraseExampleEntry disabled={locked || view.unfinishedSelection || canvasInteracting || helpOpen}
+                selectRegion={view.canSelectEraseExample && engine ? () => engine.selectEraseExampleRegion() : undefined} />}
             </> : panelKind === "adjust" ? engine && <AdjustmentsPanel view={view} engine={engine} disabled={locked} /> : <>
             {view.text && engine ? <TextPanel key={view.selectedId ?? "new-text"} text={view.text} engine={engine} disabled={locked} selected={!!view.selectedId} editing={view.textEditing} vertical={view.textVertical} error={view.textError} fontError={view.textFontError} />
               : panelKind === "draw" && engine ? <DrawingToolsPanel view={view} engine={engine} disabled={locked} /> : null}

@@ -6,12 +6,12 @@ type PreviewOutcome = "completed" | "unknown" | { message: string };
 /** Kept out of normal production builds. No network, business records, or saved image IDs. */
 export const previewReplacement = import.meta.env.DEV || import.meta.env.MODE === "demo" ? (() => {
   const scenarios: { id: PreviewReplacementScenario; label: string }[] = [
-    { id: "texts", label: "新增文案检测" }, { id: "success", label: "完整成功流程" },
+    { id: "success", label: "完整成功流程" }, { id: "texts", label: "仅新增文案检测" },
     { id: "slow", label: "等待较久" }, { id: "no_progress", label: "未回报具体阶段" },
     { id: "image_blocked", label: "图中文字未通过" }, { id: "detection_failed", label: "检测服务失败" },
     { id: "unknown", label: "替换结果待确认" }, { id: "review_failed", label: "审核页面刷新失败" },
   ];
-  const normalize = (value: string | null): PreviewReplacementScenario => scenarios.find(item => item.id === value)?.id ?? "texts";
+  const normalize = (value: string | null): PreviewReplacementScenario => scenarios.find(item => item.id === value)?.id ?? "success";
   const wait = (duration: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException("已取消演示", "AbortError")); return; }
     const abort = () => { clearTimeout(timer); reject(new DOMException("已取消演示", "AbortError")); };

@@ -24,6 +24,7 @@ import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } f
 import { textCheckIssues } from "../integration";
 import { validatePreviewTexts } from "./previewTextValidation";
 import { previewReplacement } from "./previewReplacement";
+import { previewErase } from "./previewErase";
 import type { PreviewReplacementScenario } from "./previewReplacement";
 import { readReplacementProgress } from "./submissionProgress";
 import type { SubmissionProgress } from "./submissionProgress";
@@ -55,7 +56,8 @@ export class EditorController {
   private disposed = false;
   private ready = false;
   private busy = false;
-  private job?: { id: string; controller: AbortController; stage: EraseStage; startedAt: number };
+  private job?: { id: string; controller: AbortController; stage: EraseStage; startedAt: number; illustrative?: boolean };
+  private previewEraseBaseId?: string;
   private telemetry: EraseTelemetry;
   private eraseRun?: EraseTelemetryRun;
   private erasePreviewAttempt = 0;
@@ -106,7 +108,7 @@ export class EditorController {
   private submitting = false;
   private submissionStage = "";
   private submissionProgress?: SubmissionProgress;
-  private previewScenario: PreviewReplacementScenario = "texts";
+  private previewScenario: PreviewReplacementScenario = "success";
   private previewSubmission?: { scenario: PreviewReplacementScenario; controller: AbortController; reviewAttempts: number };
   private submission?: ReplacementInput;
   private submissionRun = 0;
@@ -275,6 +277,7 @@ export class EditorController {
     const view: EditorView = {
       ready: this.ready, busy: this.busy, task: !!this.job, notice: this.notice, noticeId: this.noticeId, noticePresentation: this.noticePresentation, tool: this.tool, eraseMode: this.selection.mode,
       eraseStage: this.job?.stage, eraseStageStartedAt: this.job?.startedAt,
+      canSelectEraseExample: this.canPreviewErase(),
       workspace: this.workspace, drawingTool: this.lastDrawingTool, propertiesRequest: this.propertiesRequest,
       maskOperation: this.operation, brushSize: this.brushSize, drawSize: this.drawSize, color: this.color,
       zoom: this.canvas.getZoom(), size: this.size,
@@ -341,8 +344,14 @@ export class EditorController {
     const token = this.generation;
     try {
       const url = this.integration?.initialImage ?? (new URLSearchParams(location.search).get("image")?.trim() || editorConfig.defaultImageUrl);
-      const blob = url instanceof Blob ? url : url ? await fetch(url).then(response => { if (!response.ok) throw new Error("默认图片无法加载"); return response.blob(); }) : await defaultImage();
-      if (!this.disposed && token === this.generation) await this.openImage(blob, "当前图片", false);
+      const blob = url instanceof Blob ? url : url ? await fetch(url).then(response => { if (!response.ok) throw new Error("默认图片无法加载"); return response.blob(); }) : await defaultImage(this.preview && !this.integration);
+      if (!this.disposed && token === this.generation) {
+        await this.openImage(blob, "当前图片", false);
+        const baseId = this.original?.objects.find(object => object.editorPurpose === "base")?.editorAssetId;
+        if (previewErase && this.preview && !this.integration && !url && !this.disposed && baseId && this.assets.get(baseId).blob === blob) {
+          this.previewEraseBaseId = baseId; this.emit();
+        }
+      }
     } catch (error) { this.report(error); }
   }
 
@@ -1366,7 +1375,23 @@ export class EditorController {
     if (!this.job) return;
     this.job.stage = stage; this.job.startedAt = Date.now();
     this.notice = { preparing: "正在准备图片和选区…", waiting: "正在等待消除结果…", preview: "正在生成对比预览…" }[stage];
+    if (previewErase && this.job.illustrative) this.notice = `固定样图演示 · ${this.notice}`;
     this.emit();
+  }
+
+  private canPreviewErase() {
+    if (!previewErase || !this.preview || this.integration || editorConfig.eraseApiUrl || !this.previewEraseBaseId) return false;
+    const base = this.canvas.getObjects().find(object => object.editorPurpose === "base");
+    return base instanceof FabricImage && base.editorAssetId === this.previewEraseBaseId && !base.filters.length;
+  }
+
+  selectEraseExampleRegion() {
+    if (!previewErase || !this.canPreviewErase() || this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.drawingInProgress) return;
+    this.setTool("erase"); this.setEraseMode("rect"); this.maskHidden = false; this.operation = "add";
+    if (!previewErase.matches(this.masks)) {
+      this.masks = [previewErase.selection()]; this.invalidateMaskPreview(); this.commit();
+    }
+    this.notice = "已选择示例标签区域，点击「开始消除」体验模拟流程"; this.emit();
   }
 
   private async generateResultPreview(snapshot: DocumentSnapshot, result: PendingResult, current: () => boolean) {
@@ -1381,7 +1406,7 @@ export class EditorController {
       beforeUrl = URL.createObjectURL(before); afterUrl = URL.createObjectURL(after);
       this.pending = { ...result, beforeUrl, afterUrl, previewPreparing: false, previewError: undefined };
       beforeUrl = afterUrl = undefined;
-      this.notice = "消除结果已返回，请检查后使用或放弃";
+      this.notice = previewErase && result.illustrative ? "示例结果已就绪，请检查后使用或放弃；未调用消除服务" : "消除结果已返回，请检查后使用或放弃";
     } catch {
       if (current()) {
         run?.previewFailed("generate", attempt, `generate:${attempt}`);
@@ -1398,17 +1423,21 @@ export class EditorController {
     if (this.locked) return;
     if (!this.hasMask) { this.notice = "当前选区为空，请先添加需要修改的区域"; this.emit(); return; }
     const apiUrl = editorConfig.eraseApiUrl;
-    if (!apiUrl) { this.notice = "消除服务尚未接入，图片和选区已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
+    const illustrative = !!previewErase && this.canPreviewErase();
+    if (!apiUrl && !illustrative) { this.notice = "消除服务尚未接入，图片和选区已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
     if (this.selection.draft || this.shapeDraft) { this.notice = "请先完成或取消当前未闭合选区／图形"; this.emit(); return; }
+    if (illustrative && !previewErase!.matches(this.masks)) {
+      this.notice = "固定样图演示仅支持预设标签区域，请点击「选择示例标签区域」后再开始"; this.noticePresentation = "persistent"; this.emit(); return;
+    }
     // The result dialog owns keyup events. End temporary pan before the request
     // so a Space release inside that dialog cannot leave the editor panning.
     this.selection.endMove(); this.space = false; this.panning = undefined;
     this.finishText(); this.commit();
     const snapshot = this.snapshot(), documentId = this.documentId, revision = this.revision;
-    const job = { id: crypto.randomUUID(), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now() }; this.job = job;
+    const job = { id: crypto.randomUUID(), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now(), illustrative }; this.job = job;
     this.eraseRun?.decision("no_decision", "stale");
     const context = this.integration?.context;
-    const run = this.telemetry.start({ requestId: job.id, documentId, imageSessionId: this.imageSessionId, revision, ...snapshot.size, source: this.source,
+    const run = illustrative ? undefined : this.telemetry.start({ requestId: job.id, documentId, imageSessionId: this.imageSessionId, revision, ...snapshot.size, source: this.source,
       ...(context ? { taskId: context.taskId, imageId: context.imageId } : {}) });
     this.eraseRun = run; this.erasePreviewAttempt = 0;
     const heldAssets = assetIds(snapshot); this.processingAssets.set(job.id, heldAssets);
@@ -1421,9 +1450,9 @@ export class EditorController {
       const image = await renderDocument(snapshot, this.assets, "base");
       if (!current()) return;
       this.setEraseStage("waiting");
-      run.requestStarted();
-      const result = await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal,
-        requestId: job.id, onResponse: details => { if (current()) run.response(details); } });
+      run?.requestStarted();
+      const result = illustrative ? await previewErase!.result(job.controller.signal) : await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal,
+        requestId: job.id, onResponse: details => { if (current()) run?.response(details); } });
       if (!current()) return;
       this.setEraseStage("preview");
       let asset: ImageAsset;
@@ -1432,13 +1461,13 @@ export class EditorController {
       heldAssets.add(asset.id);
       if (!current()) return;
       if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("消除结果尺寸与当前图片不一致，未采用，请稍后重试");
-      run.requestFinished("success");
-      await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region }, current);
+      run?.requestFinished("success");
+      await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region, ...(illustrative ? { illustrative: true } : {}) }, current);
     } catch (error) {
       if (current()) {
-        if (job.stage === "preparing") run.preparationFailed(); else run.requestFinished("failure", eraseFailureCode(error));
+        if (job.stage === "preparing") run?.preparationFailed(); else run?.requestFinished("failure", eraseFailureCode(error));
         const reason = error instanceof TypeError ? "无法连接消除服务，请稍后重试" : (error as Error)?.message || "请稍后重试";
-        this.report(new Error(`消除失败，图片和选区已保留。${reason}`));
+        this.report(new Error(`${illustrative ? "演示失败" : "消除失败"}，图片和选区已保留。${reason}`));
       }
     }
     finally {
@@ -1454,7 +1483,7 @@ export class EditorController {
     if (!pending?.previewError || this.job || this.busy || this.confirmation || this.disposed) return;
     if (pending.documentId !== this.documentId || pending.revision !== this.revision) { this.discardResult("stale"); return; }
     const snapshot = this.snapshot();
-    const job = { id: uid("preview"), controller: new AbortController(), stage: "preview" as EraseStage, startedAt: Date.now() }; this.job = job;
+    const job = { id: uid("preview"), controller: new AbortController(), stage: "preview" as EraseStage, startedAt: Date.now(), illustrative: pending.illustrative }; this.job = job;
     const heldAssets = assetIds(snapshot); heldAssets.add(pending.assetId); this.processingAssets.set(job.id, heldAssets);
     this.pending = { ...pending, previewPreparing: true }; this.configure(); this.setEraseStage("preview");
     const current = () => !this.disposed && this.job === job && !job.controller.signal.aborted &&
@@ -1501,7 +1530,10 @@ export class EditorController {
     try {
       const snapshot = applyResult(this.snapshot(), this.imageData(this.assets.get(pending.assetId), "消除结果"));
       await this.loadSnapshot(snapshot);
-      if (!this.disposed) { this.eraseRun?.decision("accepted"); this.busy = false; this.discardResult("accepted"); this.tool = "erase"; this.configure(); this.commit(); this.notice = "已使用消除结果，可继续选择区域"; }
+      if (!this.disposed) {
+        this.eraseRun?.decision("accepted"); this.busy = false; this.discardResult("accepted"); this.tool = "erase"; this.configure(); this.commit();
+        this.notice = previewErase && pending.illustrative ? "已使用示例结果，可继续编辑或撤销；未保存到任务" : "已使用消除结果，可继续选择区域";
+      }
     } catch {
       if (!this.disposed && this.pending?.assetId === pending.assetId) {
         this.eraseRun?.applyFailed();
