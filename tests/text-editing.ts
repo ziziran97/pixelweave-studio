@@ -1,7 +1,7 @@
 import { Textbox } from "fabric";
 import { createEditor, frame, picture } from "./editing-tools";
 import { FONT_FAMILY, FONT_WEIGHTS, ensureFont } from "../src/editor/fonts";
-import { textProperties, toggleTextBold } from "../src/editor/text";
+import { toggleTextBold } from "../src/editor/text";
 import { ContentTextbox } from "../src/editor/ContentTextbox";
 
 export async function checkTextEditing(check: (value: boolean, message: string) => void) {

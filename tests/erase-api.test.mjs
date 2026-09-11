@@ -3,13 +3,36 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
-const source = await readFile(new URL("../src/lib/eraseApi.ts", import.meta.url), "utf8");
+const limitsSource = await readFile(new URL("../src/lib/imageLimits.ts", import.meta.url), "utf8");
+const limitsCompiled = ts.transpileModule(limitsSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+const limitsUrl = `data:text/javascript;base64,${Buffer.from(limitsCompiled).toString("base64")}`;
+const source = (await readFile(new URL("../src/lib/eraseApi.ts", import.meta.url), "utf8")).replace('"./imageLimits"', JSON.stringify(limitsUrl));
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 const { callEraseApi, eraseFailureCode } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 const input = (signal = new AbortController().signal) => ({
   apiUrl: "/business/erase", image: new Blob(["jpeg"], { type: "image/jpeg" }),
   mask: new Blob(["png"], { type: "image/png" }), width: 128, height: 96,
   documentId: "document-test", revision: 7, signal,
+});
+
+for (const field of ["image", "mask"]) {
+  test(`${field} above 25 MiB is rejected before fetch`, async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("must not fetch"); });
+    const request = input();
+    request[field] = new Blob([new Uint8Array(25 * 1024 * 1024 + 1)], { type: request[field].type });
+    await assert.rejects(callEraseApi(request), { message: field === "image" ? "当前消除图片超过 25MB，请缩小图片后重试" : "消除选区数据超过 25MB，请缩小图片后重新选择区域" });
+    assert.equal(fetch.mock.callCount(), 0);
+  });
+}
+test("image and mask may each equal 25 MiB; the cap is per file, not their sum", async t => {
+  const request = input();
+  for (const field of ["image", "mask"]) request[field] = new Blob([new Uint8Array(25 * 1024 * 1024)], { type: request[field].type });
+  const fetch = t.mock.method(globalThis, "fetch", async (_url, options) => {
+    for (const field of ["image", "mask"]) assert.equal(options.body.get(field).size, 25 * 1024 * 1024);
+    return new Response(new Blob(["result"], { type: "image/jpeg" }));
+  });
+  assert.equal(await (await callEraseApi(request)).text(), "result");
+  assert.equal(fetch.mock.callCount(), 1);
 });
 
 test("JPEG binary response preserves multipart files, all metadata and browser boundary without Basic Auth", async t => {

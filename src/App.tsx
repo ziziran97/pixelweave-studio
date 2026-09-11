@@ -155,8 +155,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
         <ActionButton below className="icon-button" aria-label="还原初始" hint="还原初始：恢复进入编辑时的图片，可撤销" disabled={locked || !view.dirty} onClick={() => void engine?.resetOriginal()}><RotateCcwSquare /></ActionButton>
         <OriginalPreviewButton below className="icon-button" engine={engine} active={view.compareOriginal} disabled={compareDisabled} />
       </div>
-      <div className="top-right"><span className="document-size" title="当前图片尺寸（宽 × 高），缩放不改变实际尺寸">{view.size.width} × {view.size.height} px</span>
-        <ActionButton below className="text-button upload-button" hint="载入编辑，暂不替换任务图片" disabled={!view.canUpload} onClick={() => fileRef.current?.click()}><ImagePlus size={17} />上传本地图片</ActionButton>
+      <div className="top-right">{view.ready && <span className="document-size" title="当前图片尺寸（宽 × 高），缩放不改变实际尺寸">{view.size.width} × {view.size.height} px</span>}
+        <ActionButton below className="text-button upload-button" hint="JPG / PNG，不超过 25MB，宽、高均不超过 5000 px；载入编辑，暂不替换任务图片" disabled={!view.canUpload} onClick={() => fileRef.current?.click()}><ImagePlus size={17} />上传本地图片</ActionButton>
         <span className="action-divider" aria-hidden="true" />
         <ActionButton below className="primary-button" hint="将当前图片保存到任务" disabled={!view.canSubmit} onClick={() => void engine?.submitReplacement()}><Save size={17} />替换图片</ActionButton>
         <ActionButton below className="icon-button" aria-label="关闭编辑" hint="关闭编辑" disabled={view.busy || view.colorEditing || view.picking || view.submitting || view.saved} onClick={() => void engine?.requestClose()}><X size={19} /></ActionButton>
@@ -191,7 +191,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
           onPointerDownCapture={event => { if (event.button === 0 && event.target instanceof HTMLCanvasElement && canvasPointer.current === undefined) { canvasPointer.current = event.pointerId; setCanvasInteracting(true); } }}>
           <canvas ref={canvasRef} /><canvas ref={overlayRef} className="mask-overlay" aria-hidden="true" />
           {view.picking && <div className="picking-hint" role="status">点击图片取色<button onClick={() => engine?.cancelColorPick()}>取消</button></div>}
-          {!view.picking && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} locateProblem={locked ? undefined : locateProblem} />}
+          {!view.picking && <EraserNotice view={view} cancelTask={() => engine?.cancelTask()} retryImage={() => void engine?.retryInitialImage()} locateProblem={locked ? undefined : locateProblem} />}
           {view.compareOriginal && <span className="original-badge">正在查看原图 · 松开返回编辑</span>}
           {view.compareAdjustments && <span className="original-badge">正在查看调色前 · 松开返回编辑</span>}
           <div className="canvas-controls">

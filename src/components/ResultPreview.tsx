@@ -38,12 +38,21 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
   const fitZoom = Math.min(1, bounds.width / size.width, bounds.height / size.height);
   const minZoom = Math.min(.03, fitZoom), maxZoom = 4;
   const zoom = camera.zoom ?? fitZoom;
-  const ready = !!result.beforeUrl && !!result.afterUrl && loaded.every(Boolean) && !loadError && !result.previewError && !result.previewPreparing && bounds.width > 1;
+  const imagesLoaded = loaded.every(Boolean);
+  const ready = !!result.beforeUrl && !!result.afterUrl && imagesLoaded && !loadError && !result.previewError && !result.previewPreparing && bounds.width > 1;
   useEffect(() => {
     if (suspended) return;
     if (ready) onPreviewState?.("shown", loadAttempt);
     else if (loadError) onPreviewState?.("failed", loadAttempt);
   }, [ready, loadError, suspended, loadAttempt, onPreviewState]);
+  useEffect(() => {
+    if (imagesLoaded || loadError || !result.beforeUrl || !result.afterUrl || result.previewPreparing || result.previewError) return;
+    const attempt = loadAttempt;
+    const timer = window.setTimeout(() => {
+      if (loadGeneration.current === attempt) setLoadError(true);
+    }, 30000);
+    return () => window.clearTimeout(timer);
+  }, [imagesLoaded, loadError, loadAttempt, result.beforeUrl, result.afterUrl, result.previewPreparing, result.previewError]);
 
   // One camera in image coordinates keeps both views aligned at every zoom level.
   const constrain = (value: Camera, scale: number) => {

@@ -1,5 +1,24 @@
 import { uid } from "./model";
 import { editorConfig } from "../config";
+import { fetchImageBlob } from "../lib/imageLoading";
+import { checkImageFileSize, ImageFileSizeError } from "../lib/imageLimits";
+
+export const MAX_IMAGE_DIMENSION = 5000;
+export class ImageSizeError extends Error {}
+export function checkImageDimensions(width: number, height: number) {
+  if (!width || !height) throw new Error("图片尺寸无效，请重新选择");
+  if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) throw new ImageSizeError("图片宽、高均不能超过 5000 px，请缩小图片后重试");
+}
+const decodedSizes = new WeakMap<Blob, { width: number; height: number }>();
+async function imageSize(blob: Blob) {
+  const cached = decodedSizes.get(blob);
+  if (cached) return cached;
+  const bitmap = await createImageBitmap(blob);
+  const size = { width: bitmap.width, height: bitmap.height }; bitmap.close();
+  checkImageDimensions(size.width, size.height);
+  decodedSizes.set(blob, size);
+  return size;
+}
 
 export type ImageAsset = { id: string; blob: Blob; url: string; width: number; height: number; cost: number };
 export class Assets {
@@ -8,9 +27,7 @@ export class Assets {
   async add(blob: Blob): Promise<ImageAsset> {
     if (this.disposed) throw new DOMException("编辑会话已关闭", "AbortError");
     if (!blob.type.startsWith("image/")) throw new Error("返回内容不是图片");
-    const bitmap = await createImageBitmap(blob);
-    const { width, height } = bitmap;
-    bitmap.close();
+    const { width, height } = await imageSize(blob);
     if (this.disposed) throw new DOMException("编辑会话已关闭", "AbortError");
     if (!width || !height) throw new Error("图片尺寸无效，请重新选择");
     const asset = { id: uid("asset"), blob, url: URL.createObjectURL(blob), width, height, cost: blob.size + width * height * 4 };
@@ -25,13 +42,11 @@ export class Assets {
 export function toBlob(canvas: HTMLCanvasElement, type = "image/png", quality?: number) {
   return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片导出失败")), type, quality));
 }
-export async function defaultImage(preview = false) {
+export async function defaultImage(preview = false, signal?: AbortSignal) {
   if ((import.meta.env.DEV || import.meta.env.MODE === "demo") && preview) {
     // Reuse only the BEFORE image; the comparison module remains on demand.
-    const { default: url } = await import("../../docs/demo/eraser/before-2910x1800.png");
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("默认图片无法加载");
-    return response.blob();
+    const { default: url } = await import("../../docs/demo/eraser/before-970x600.jpg");
+    return fetchImageBlob(url, { signal, cache: import.meta.env.DEV ? "default" : "force-cache" });
   }
   const canvas = document.createElement("canvas"); canvas.width = 1280; canvas.height = 800;
   const ctx = canvas.getContext("2d")!;
@@ -53,15 +68,18 @@ export async function validateJpeg(blob: Blob, name?: string) {
   // Ignore an unreliable MIME label only after checking the JPEG signature.
   const jpeg = new Blob([blob], { type: "image/jpeg" });
   try {
-    const bitmap = await createImageBitmap(jpeg);
-    const size = { width: bitmap.width, height: bitmap.height }; bitmap.close();
-    if (!size.width || !size.height) throw new Error();
+    const size = await imageSize(decodedSizes.has(blob) ? blob : jpeg);
+    decodedSizes.set(blob, size); decodedSizes.set(jpeg, size);
     return { jpeg, ...size };
-  } catch { throw new Error("图片无法正常读取，请检查文件是否损坏"); }
+  } catch (error) {
+    if (error instanceof ImageSizeError) throw error;
+    throw new Error("图片无法正常读取，请检查文件是否损坏");
+  }
 }
 
 /** Identify the encoded data, not the file extension or browser MIME label. */
 export async function prepareUploadedImage(file: Blob) {
+  checkImageFileSize(file);
   const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) {
     return { ...await validateJpeg(file), converted: false };
@@ -74,14 +92,20 @@ export async function prepareUploadedImage(file: Blob) {
   catch { throw new Error("图片无法正常读取，请检查文件是否损坏"); }
   const canvas = document.createElement("canvas");
   try {
+    checkImageDimensions(bitmap.width, bitmap.height);
     canvas.width = bitmap.width; canvas.height = bitmap.height;
     const ctx = canvas.getContext("2d");
     if (!ctx || !canvas.width || !canvas.height) throw new Error();
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bitmap, 0, 0);
-    const checked = await validateJpeg(await toBlob(canvas, "image/jpeg", editorConfig.jpegQuality));
+    const jpeg = await toBlob(canvas, "image/jpeg", editorConfig.jpegQuality);
+    checkImageFileSize(jpeg, "PNG 转换后的图片超过 25MB，请压缩后重新上传");
+    const checked = await validateJpeg(jpeg);
     if (checked.width !== bitmap.width || checked.height !== bitmap.height) throw new Error();
     return { ...checked, converted: true };
-  } catch { throw new Error("图片转换失败，请重新选择图片后重试"); }
+  } catch (error) {
+    if (error instanceof ImageSizeError || error instanceof ImageFileSizeError) throw error;
+    throw new Error("图片转换失败，请重新选择图片后重试");
+  }
   finally { bitmap.close(); canvas.width = canvas.height = 0; }
 }

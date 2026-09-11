@@ -91,7 +91,7 @@ export class ContentTextbox extends Textbox {
       const sign = this.direction === "ltr" ? 1 : -1;
       top -= this.getHeightOfLine(lineIndex) / this.lineHeight * this._fontSizeFraction;
       let start = 0;
-      line.forEach((char, index) => {
+      line.forEach((_char, index) => {
         const last = index === line.length - 1;
         if (last || gaps.has(index) || this.charSpacing !== 0 || util.hasStyleChanged(this.getCompleteStyleDeclaration(lineIndex, index), this.getCompleteStyleDeclaration(lineIndex, index + 1))) {
           this._renderChar(method, ctx, lineIndex, index, line.slice(start, index + 1).join(""), left + sign * this.__charBounds[lineIndex][start].left, top);
