@@ -24,7 +24,7 @@ export type ImageAsset = { id: string; blob: Blob; url: string; width: number; h
 export class Assets {
   private items = new Map<string, ImageAsset>();
   private disposed = false;
-  async add(blob: Blob): Promise<ImageAsset> {
+  async add(blob: Blob, retained?: Set<string>): Promise<ImageAsset> {
     if (this.disposed) throw new DOMException("编辑会话已关闭", "AbortError");
     if (!blob.type.startsWith("image/")) throw new Error("返回内容不是图片");
     const { width, height } = await imageSize(blob);
@@ -32,6 +32,8 @@ export class Assets {
     if (!width || !height) throw new Error("图片尺寸无效，请重新选择");
     const asset = { id: uid("asset"), blob, url: URL.createObjectURL(blob), width, height, cost: blob.size + width * height * 4 };
     this.items.set(asset.id, asset);
+    // Pin before resolving: another task can collect before the caller resumes.
+    retained?.add(asset.id);
     return asset;
   }
   get(id: string) { const asset = this.items.get(id); if (!asset) throw new Error("图片资源已失效，请重新打开图片"); return asset; }

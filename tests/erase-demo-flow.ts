@@ -69,6 +69,26 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
   try {
     editorConfig.eraseApiUrl = ""; editorConfig.defaultImageUrl = "";
     await mount();
+    if (import.meta.env.MODE === "production-test") {
+      check(!button("选择示例标签区域") && !!button("查看消除结果示例"), "真实测试漏配接口时仍只允许独立查看样例，不启用固定结果流程");
+      check(host.querySelector(".preview-label")?.textContent === "真实消除测试 · 检测与保存为模拟", "真实测试标识与缺少接口配置分开，不误标为纯演示或已连接");
+      engine.selectEraseExampleRegion();
+      check(!snapshot().masks.length, "真实测试漏配接口时不能通过直接调用创建演示选区");
+      engine.setEraseMode("rect"); drag(633, 458, 930, 575); await paint();
+      const missingConfigDraft = draft(), missingConfigRevision = probe().revision;
+      await run(); await paint();
+      check(snapshot().masks.length === 1 && draft() === missingConfigDraft && probe().revision === missingConfigRevision &&
+        !probe().pending && !probe().job && apiRequests === 0 && sampleRequests === 0 && host.textContent!.includes("消除服务尚未接入"),
+        "真实测试漏配接口时明确失败，保留图片、选区及历史，不请求算法或固定结果");
+      editorConfig.eraseApiUrl = "/__erase_demo_real_service__";
+      const scenarios = host.querySelector<HTMLSelectElement>(".preview-scenario select")!;
+      scenarios.value = "texts"; scenarios.dispatchEvent(new Event("change", { bubbles: true })); await paint();
+      await run(); await paint();
+      check(apiRequests === 1 && sampleRequests === 0 && !probe().pending && draft() === missingConfigDraft &&
+        host.querySelector(".preview-label")?.textContent === "真实消除测试 · 检测与保存为模拟",
+        "切换替换演示场景仍调用真实测试接口，服务失败不回退为固定结果且保留草稿");
+      return;
+    }
     check(!!button("选择示例标签区域") && !snapshot().masks.length && button("开始消除")!.disabled, "无接口默认样图提供流程入口，初始不选区、不自动消除");
     const initialId = baseId(), initialBlob = probe().assets.get(initialId).blob;
     const telemetry = JSON.stringify(readEraseTelemetry());
@@ -135,6 +155,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     engine.setAdjustments({ ...snapshot().adjustments, brightness: 20 }, true); await paint(); const adjusted = draft();
     engine.selectEraseExampleRegion(); await run(); await paint();
     check(!button("选择示例标签区域") && !probe().pending && draft() === adjusted, "已调色底图不套用固定结果，不能通过直接调用绕过保护");
+    if (import.meta.env.MODE === "demo") check(host.textContent!.includes("当前为纯演示，仅支持默认样图的固定结果演示"), "纯演示明确说明模式限制，避免被误认为真实服务故障");
     await engine.undo(); await paint();
     check(!!button("选择示例标签区域"), "撤销调色恢复固定样图流程入口");
     check(apiRequests === 0 && JSON.stringify(readEraseTelemetry()) === telemetry, "模拟等待、取消、失败、预览、采用及历史恢复均不请求业务接口或写真实消除统计");

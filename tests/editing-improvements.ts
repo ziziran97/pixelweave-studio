@@ -1,6 +1,9 @@
 import { StaticCanvas, Textbox } from "fabric";
 import { createEditor, frame, picture, pixelAt, settle } from "./editing-tools";
 import type { ReplacementInput } from "../src/integration";
+import { Assets } from "../src/editor/assets";
+import type { DocumentSnapshot } from "../src/types";
+import { renderDocument } from "../src/editor/render";
 
 export async function checkEditingImprovements(check: (value: boolean, message: string) => void) {
   let saves = 0, checks = 0, submitted: ReplacementInput | undefined;
@@ -49,6 +52,8 @@ export async function checkEditingImprovements(check: (value: boolean, message: 
     editor.answerConfirmation(id, false); await retry;
   } finally { StaticCanvas.prototype.toBlob = toBlob; dispose(); }
 
+  await checkCancelledPreviewImageLoad(check);
+
   const textTest = createEditor();
   try {
     const { editor, state, confirm } = textTest;
@@ -76,4 +81,65 @@ export async function checkEditingImprovements(check: (value: boolean, message: 
     await editor.addText({ x: 80, y: 80 });
     check(active().fontSize === 57, "历史恢复后的已有文字样式仍可继承");
   } finally { textTest.dispose(); }
+}
+
+async function checkCancelledPreviewImageLoad(check: (value: boolean, message: string) => void) {
+  for (const mode of ["切图", "上传"] as const) for (const phase of ["入库", "解码"] as const) {
+    const initialImage = await picture(), nextImage = await picture("#ffffff", 160, 120);
+    const test = createEditor({ initialImage, context: { taskId: "preview-image-load", imageId: "image" },
+      validateTexts: async () => ({ passed: true }), replace: async () => ({ status: "failed", message: "不保存" }),
+      confirmResult: async () => ({ status: "pending" }), onClose: () => {} });
+    const { editor, state, confirm } = test;
+    const probe = editor as unknown as { processingAssets: Map<string, Set<string>>; assets: Assets; snapshot: () => DocumentSnapshot };
+    const toBlob = StaticCanvas.prototype.toBlob, loadFromJSON = StaticCanvas.prototype.loadFromJSON, addAsset = Assets.prototype.add;
+    let releasePreview!: () => void, releaseLoad!: () => void, previewWaiting = false, imageWaiting = false;
+    const previewGate = new Promise<void>(resolve => { releasePreview = resolve; });
+    const imageGate = new Promise<void>(resolve => { releaseLoad = resolve; });
+    const operations: Promise<unknown>[] = [];
+    let imageAssetId = "";
+    try {
+      await editor.initialize(); editor.setTool("rect"); test.drag(20, 20, 80, 80);
+      StaticCanvas.prototype.toBlob = async function(options) {
+        const blob = await toBlob.call(this, options); previewWaiting = true; await previewGate; return blob;
+      };
+      const submission = editor.submitReplacement(); operations.push(submission);
+      await settle(() => previewWaiting);
+      const oldPins = [...probe.processingAssets.keys()];
+      editor.answerConfirmation(state().confirmation!.id, false); await submission;
+      StaticCanvas.prototype.toBlob = toBlob;
+      // Finish the old preview while the new asset is entering the store or decoding.
+      Assets.prototype.add = async function(...args) {
+        const asset = await addAsset.apply(this, args);
+        if (phase === "入库" && this === probe.assets && asset.width === 160 && asset.height === 120) {
+          imageAssetId = asset.id; imageWaiting = true; await imageGate;
+        }
+        return asset;
+      };
+      StaticCanvas.prototype.loadFromJSON = async function(...args) {
+        if (phase === "解码" && this.width === 160 && this.height === 120) {
+          const data = args[0] as { objects: Array<{ editorAssetId?: string }> };
+          imageAssetId = data.objects.find(object => object.editorAssetId)!.editorAssetId!;
+          imageWaiting = true; await imageGate;
+        }
+        await loadFromJSON.apply(this, args); return this;
+      };
+      const loading = confirm(async () => {
+        if (mode === "切图") await editor.openImage(nextImage, "新图片");
+        else await editor.uploadReplacement(new File([nextImage], "new.jpg"));
+      });
+      operations.push(loading); await settle(() => imageWaiting);
+      releasePreview(); await settle(() => oldPins.every(pin => !probe.processingAssets.has(pin)));
+      check(probe.assets.cost(imageAssetId) > 0, `${mode}（${phase}）：取消的替换预览完成清理时，不回收正在载入的新图`);
+      releaseLoad(); await loading;
+      check(state().size.width === 160 && state().size.height === 120 && state().layers.length === 1 && !state().busy,
+        `${mode}（${phase}）：旧预览晚到后，新图仍完整载入且清除旧内容`);
+      const pixel = await pixelAt(await renderDocument(probe.snapshot(), probe.assets, "final"), 40, 40);
+      check(pixel.slice(0, 3).every(value => value > 245) && probe.processingAssets.size === 0,
+        `${mode}（${phase}）：新图可正常成图，结束后释放临时资源引用`);
+    } finally {
+      if (state().confirmation) editor.answerConfirmation(state().confirmation!.id, false);
+      releasePreview(); releaseLoad(); await Promise.allSettled(operations);
+      StaticCanvas.prototype.toBlob = toBlob; StaticCanvas.prototype.loadFromJSON = loadFromJSON; Assets.prototype.add = addAsset; test.dispose();
+    }
+  }
 }
