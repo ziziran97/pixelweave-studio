@@ -4,6 +4,7 @@ import { checkEditingImprovements } from "./editing-improvements";
 import { checkGrayMasks } from "./mask-png-checks";
 import { checkMaskCancellation } from "./mask-cancellation";
 import { checkPositioning } from "./positioning";
+import { checkModeShortcuts } from "./mode-shortcuts";
 import { checkAdjustments } from "./adjustments";
 import { Assets, toBlob } from "../src/editor/assets";
 import { exportMask, hasMaskCoverage, polygonHasArea } from "../src/editor/mask";
@@ -115,5 +116,6 @@ try {
   await checkRotation(check);
   await checkReplacementFlow(check);
   await checkPositioning(check);
+  await checkModeShortcuts(check);
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { assets.dispose(); document.getElementById("results")!.textContent = reports.join("\n"); }

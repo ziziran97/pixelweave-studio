@@ -80,10 +80,29 @@ export default function App({ integration, preview = false }: { integration?: Ed
     if (restoreFocus && layerMenu?.origin.isConnected) layerMenu.origin.focus({ preventScroll: true });
   };
   const showLayerMenu = (event: React.MouseEvent<HTMLElement>, id?: string) => {
+    if (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]")) return;
+    // The canvas and layer list own their context menus, including an empty selection.
+    event.preventDefault(); event.stopPropagation();
+    if (locked || helpOpen || view.textEditing || canvasInteracting) return;
     const ids = engine?.contextSelectionAt(id ? undefined : event.nativeEvent, id);
     if (!ids?.length) return;
-    event.preventDefault(); event.stopPropagation();
     setLayerMenu({ x: event.clientX, y: event.clientY, ids, origin: event.currentTarget });
+  };
+  const handleLayerMenuKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const shortcut = (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "x";
+    const menuKey = event.key === "ContextMenu" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+    const previousShortcut = event.shiftKey && event.key === "F10" && !event.ctrlKey && !event.metaKey && !event.altKey;
+    if ((!shortcut && !menuKey && !previousShortcut) || event.nativeEvent.isComposing || event.defaultPrevented) return;
+    const target = event.target instanceof HTMLElement ? event.target : undefined;
+    if (!target || target.closest("input,textarea,select,[contenteditable=true]")) return;
+    const origin = target.closest<HTMLElement>(".layer-card,.canvas-viewport"); if (!origin) return;
+    event.preventDefault(); event.stopPropagation();
+    // Consume the retired shortcut without falling through to the browser menu.
+    if (previousShortcut || event.repeat || locked || helpOpen || view.textEditing || canvasInteracting) return;
+    const ids = engine?.contextSelectionAt(undefined, origin.dataset.layerId); if (!ids?.length) return;
+    const bounds = origin.getBoundingClientRect();
+    const anchor = origin.dataset.layerId ? { x: bounds.left + 20, y: bounds.top + bounds.height / 2 } : engine?.contextSelectionAnchor();
+    if (anchor) setLayerMenu({ ids, origin, ...anchor });
   };
   const selectionKey = view.layers.filter(layer => layer.selected).map(layer => layer.id).sort().join();
   useEffect(() => {
@@ -134,16 +153,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
   } : undefined;
 
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
-  return <div className="app-shell" onKeyDown={event => {
-    if (!(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
-    const target = event.target instanceof HTMLElement ? event.target : undefined;
-    if (!target || target.closest("input,textarea,select,[contenteditable=true]")) return;
-    const origin = target.closest<HTMLElement>(".layer-card,.canvas-viewport"); if (!origin) return;
-    const ids = engine?.contextSelectionAt(undefined, origin.dataset.layerId); if (!ids?.length) return;
-    event.preventDefault(); event.stopPropagation();
-    const bounds = origin.getBoundingClientRect();
-    setLayerMenu({ ids, origin, x: bounds.left + 20, y: bounds.top + 28 });
-  }}>
+  return <div className="app-shell" onKeyDown={handleLayerMenuKey}>
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable、supreme（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable、supreme</small>}</span>
         {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "success"}
@@ -151,7 +161,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
       </div>
       <div className="top-actions" role="group" aria-label="编辑与对比">
         <ActionButton below className="icon-button" aria-label="撤销" hint="撤销 Ctrl+Z" disabled={!view.canUndo} onClick={() => void engine?.undo()}><Undo2 /></ActionButton>
-        <ActionButton below className="icon-button" aria-label="重做" hint="重做 Ctrl+Shift+Z" disabled={!view.canRedo} onClick={() => void engine?.undo(true)}><Redo2 /></ActionButton>
+        <ActionButton below className="icon-button" aria-label="重做" hint="重做 Ctrl+Shift+Z / Ctrl+Y" disabled={!view.canRedo} onClick={() => void engine?.undo(true)}><Redo2 /></ActionButton>
         <ActionButton below className="icon-button" aria-label="还原初始" hint="还原初始：恢复进入编辑时的图片，可撤销" disabled={locked || !view.dirty} onClick={() => void engine?.resetOriginal()}><RotateCcwSquare /></ActionButton>
         <OriginalPreviewButton below className="icon-button" engine={engine} active={view.compareOriginal} disabled={compareDisabled} />
       </div>
@@ -187,7 +197,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
       </aside>
       <section className="canvas-stage">
         <div ref={viewportRef} className="canvas-viewport" aria-label="图片编辑画布" tabIndex={-1}
-          onContextMenuCapture={event => { if (event.target instanceof HTMLCanvasElement) showLayerMenu(event); }}
+          onContextMenuCapture={event => { if (event.target instanceof HTMLCanvasElement || event.target === event.currentTarget) showLayerMenu(event); }}
           onPointerDownCapture={event => { if (event.button === 0 && event.target instanceof HTMLCanvasElement && canvasPointer.current === undefined) { canvasPointer.current = event.pointerId; setCanvasInteracting(true); } }}>
           <canvas ref={canvasRef} /><canvas ref={overlayRef} className="mask-overlay" aria-hidden="true" />
           {view.picking && <div className="picking-hint" role="status">点击图片取色<button onClick={() => engine?.cancelColorPick()}>取消</button></div>}
@@ -197,8 +207,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
           <div className="canvas-controls">
           <div className="zoom-control" role="group" aria-label="画布操作">
             <div className="canvas-mode-controls" role="group" aria-label="画布模式">
-              <ActionButton hint="选择并编辑文字、图形" aria-label="选择" aria-pressed={view.tool === "select" || view.tool === "text"} disabled={locked} onClick={() => engine?.setTool("select")}><MousePointer2 /></ActionButton>
-              <ActionButton hint="拖动画布；按住空格可临时平移" aria-label="平移" aria-pressed={view.tool === "pan"} disabled={locked} onClick={() => engine?.setTool("pan")}><Hand /></ActionButton>
+              <ActionButton hint="切换快捷键(V)，选择并编辑图层" aria-label="选择" aria-keyshortcuts="V" aria-pressed={view.tool === "select" || view.tool === "text"} disabled={locked} onClick={() => engine?.setTool("select")}><MousePointer2 /></ActionButton>
+              <ActionButton hint="切换快捷键(H)，按住空格可临时平移" aria-label="平移" aria-keyshortcuts="H" aria-pressed={view.tool === "pan"} disabled={locked} onClick={() => engine?.setTool("pan")}><Hand /></ActionButton>
             </div>
             <div className="canvas-zoom-controls" role="group" aria-label="缩放查看">
               <ActionButton hint={view.zoom <= 0.03 ? "已缩小至最小比例 3%" : "缩小"} aria-label="缩小" disabled={view.zoom <= 0.03} onClick={() => engine?.zoomTo(view.zoom / 1.2)}><ZoomOut /></ActionButton><output aria-label="当前缩放比例">{Math.round(view.zoom * 100)}%</output>

@@ -4,6 +4,7 @@ import { ActiveSelection } from "fabric";
 import App from "../src/App";
 import { LayersPanel } from "../src/components/LayersPanel";
 import { createEditor, frame, picture, settle } from "./editing-tools";
+import { checkLayerShortcuts } from "./layer-shortcuts";
 import type { EditorIntegration } from "../src/integration";
 import "../src/styles.css";
 
@@ -15,6 +16,7 @@ const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[
 const test = createEditor();
 let disposed = false;
 try {
+  await checkLayerShortcuts(check);
   await test.editor.initialize();
   const { editor, state } = test;
   const render = async (hidden = false, locate?: { id: string; request: number }) => {

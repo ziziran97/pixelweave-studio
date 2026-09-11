@@ -29,11 +29,31 @@ const openMenu = async () => {
   const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: bounds.left + 40, clientY: bounds.top + 20 });
   target.dispatchEvent(event); await paint(); return event;
 };
+const menuKey = async (target: HTMLElement, options: KeyboardEventInit = {}) => {
+  target.focus();
+  const event = new KeyboardEvent("keydown", { key: "X", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true, ...options });
+  target.dispatchEvent(event); await paint(); return event;
+};
+const dismissMenu = async () => {
+  document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await paint();
+};
 try {
   await checkProductivity(check);
   root.render(createElement(App, { integration: { initialImage: await picture(), context: { taskId: "productivity", imageId: "image" }, validateTexts: async () => ({ passed: true as const }),
     replace: async () => ({ status: "failed" as const, message: "测试结束" }), confirmResult: async () => ({ status: "pending" as const }), onClose: () => {} } }));
-  await ready(); button("文字").click(); await paint(); button("添加文字").click(); await ready();
+  await ready();
+  const viewport = host.querySelector<HTMLElement>(".canvas-viewport")!;
+  const emptyCanvas = host.querySelector<HTMLCanvasElement>("canvas.upper-canvas")!;
+  for (const options of [{}, { key: "F10", ctrlKey: false }, { key: "ContextMenu", ctrlKey: false, shiftKey: false }]) {
+    check((await menuKey(viewport, options)).defaultPrevented && !menu(), "无选择时菜单按键被编辑区接管，不弹浏览器或图层菜单");
+  }
+  const blankContext = new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true });
+  emptyCanvas.dispatchEvent(blankContext); await paint();
+  check(blankContext.defaultPrevented && !menu(), "空白画布右键不提供误导性的浏览器另存为与复制图片菜单");
+  const baseContext = new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true });
+  host.querySelector('[data-purpose="base"]')!.dispatchEvent(baseContext); await paint();
+  check(baseContext.defaultPrevented && !menu(), "底图行无可用选择时也拦截浏览器原生菜单");
+  button("文字").click(); await paint(); button("添加文字").click(); await ready();
   const selectedId = row().dataset.layerId;
   const size = await input("字号", "150");
   check(!button("撤销").disabled && !size.disabled, "字号有效输入立即进入预览，输入框保持可编辑");
@@ -46,6 +66,11 @@ try {
   const numeric = await input("字号", "80"); await input("字号", "120");
   numeric.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await paint();
   check(field("字号").value === before && document.activeElement === numeric, "同一轮输入Esc还原最初数值并保留焦点");
+  check(!(await menuKey(numeric)).defaultPrevented && !menu(), "数字输入时Ctrl+Shift+X不打开图层菜单");
+  check(!(await menuKey(numeric, { key: "F10", ctrlKey: false })).defaultPrevented && !menu(), "数字输入时保留Shift+F10的原生编辑菜单用法");
+  const inputContext = new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true });
+  numeric.dispatchEvent(inputContext);
+  check(!inputContext.defaultPrevented, "输入框右键保留原生编辑菜单");
   numeric.blur();
   const last = Number(field("字号").value); const wheel = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
   field("字号").dispatchEvent(wheel); await paint();
@@ -87,8 +112,69 @@ try {
   check(!menu() && row().dataset.layerId === oldId, "Esc仅关闭图层菜单，不取消选择");
   await openMenu(); const outside = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }); canvas.dispatchEvent(outside); await paint();
   check(!menu() && outside.defaultPrevented && row().dataset.layerId === oldId, "菜单外首次点击只关闭菜单，不穿透画布操作");
-  row().focus(); row().dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true })); await paint();
-  check(!!menu(), "图层行支持Shift+F10打开菜单");
+  check((await menuKey(row(), { key: "F10", ctrlKey: false })).defaultPrevented && !menu(), "已选图层上的旧Shift+F10不再打开任一菜单");
+  for (const options of [{ shiftKey: false }, { altKey: true }, { isComposing: true }]) {
+    check(!(await menuKey(row(), options)).defaultPrevented && !menu(), "不完整组合、Alt组合及输入法组词不触发图层菜单");
+  }
+  check((await menuKey(row(), { repeat: true })).defaultPrevented && !menu(), "长按重复不反复打开图层菜单");
+  check((await menuKey(row())).defaultPrevented && !!menu(), "图层行支持Ctrl+Shift+X打开菜单");
+  const rowBox = row().getBoundingClientRect(), menuBox = menu()!.getBoundingClientRect();
+  check(Math.abs(menuBox.top - Math.max(8, Math.min(rowBox.top + rowBox.height / 2, innerHeight - menuBox.height - 8))) < 1,
+    "键盘从图层行打开菜单时贴近该行并在窗口边缘避让");
+  await dismissMenu();
+  check(document.activeElement === row(), "键盘菜单关闭后返回对应图层行焦点");
+  check((await menuKey(viewport)).defaultPrevented && !!menu(), "画布支持Ctrl+Shift+X打开当前选择的菜单");
+  const canvasMenuX = menu()!.getBoundingClientRect().left;
+  check(Math.abs(canvasMenuX - (viewport.getBoundingClientRect().left + 20)) > 40, "画布快捷菜单定位在对象附近，不固定在容器左上角");
+  await dismissMenu();
+  check(document.activeElement === viewport, "画布键盘菜单关闭后恢复画布焦点");
+  const zoom = Number(host.querySelector('[aria-label="当前缩放比例"]')!.textContent!.replace("%", "")) / 100;
+  viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true, cancelable: true }));
+  viewport.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true })); await paint();
+  await menuKey(viewport);
+  check(Math.abs(menu()!.getBoundingClientRect().left - canvasMenuX - zoom * 10) < 1, "移动对象后快捷菜单锚点同步移动，不复用旧坐标");
+  await dismissMenu();
+  check((await menuKey(row(), { ctrlKey: false, metaKey: true })).defaultPrevented && !!menu(), "兼容Command+Shift+X且不改变所选图层");
+  await dismissMenu();
+  const unselected = host.querySelector<HTMLElement>('.layer-card:not(.selected)[data-purpose="content"]')!;
+  check((await menuKey(unselected)).defaultPrevented && !menu() && row().dataset.layerId === oldId, "未选中图层行的快捷键不切换选择或弹出浏览器菜单");
+  const unselectedContext = new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true });
+  unselected.dispatchEvent(unselectedContext); await paint();
+  check(unselectedContext.defaultPrevented && !menu() && row().dataset.layerId === oldId, "右键未选中图层不打开原生菜单，也不切换原有选择");
+  button("平移").click(); await paint();
+  check((await menuKey(viewport)).defaultPrevented && !menu(), "平移状态下不打开菜单或泄漏到浏览器默认行为");
+  button("选择").click(); await paint();
+  const layerKey = async (key: string, extra: KeyboardEventInit = {}, target: HTMLElement = viewport) => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true, ...extra })); await paint();
+  };
+  const layerIds = () => [...host.querySelectorAll<HTMLElement>('.layer-card[data-purpose="content"]')].map(item => item.dataset.layerId);
+  await layerKey("ArrowUp", { shiftKey: true });
+  check(layerIds()[0] === oldId && button("置顶").disabled && button("上移一层").disabled, "Ctrl+Shift+↑置顶后图层列表及按钮边界同步");
+  await layerKey("ArrowDown", { shiftKey: true });
+  check(layerIds().at(-1) === oldId && button("置底").disabled && button("下移一层").disabled, "Ctrl+Shift+↓置底后仍保留在底图上方，并同步禁用向下按钮");
+  await openMenu(); command("调整层级").click(); await paint();
+  check(document.querySelector('[role="menu"][aria-label="调整图层层级"]')!.textContent!.includes("Ctrl+Shift+↑"), "右键层级子菜单展示排序快捷键");
+  await layerKey("ArrowUp", {}, document.activeElement as HTMLElement);
+  check(!menu() && layerIds().at(-2) === oldId && row().dataset.layerId === oldId, "层级子菜单内Ctrl+↑执行上移并关闭菜单，保留选择");
+  await openMenu(); const repeatedOrder = layerIds().join();
+  await layerKey("ArrowDown", { repeat: true }, document.activeElement as HTMLElement);
+  check(!!menu() && layerIds().join() === repeatedOrder, "菜单中的重复组合键不连续排序"); await dismissMenu();
+  button("收起工具属性")?.click(); await paint(); button("收起图层")?.click(); await paint();
+  const allZoom = host.querySelector('[aria-label="当前缩放比例"]')!.textContent;
+  const selectableCount = host.querySelectorAll('.layer-card[data-purpose="content"] .layer-select:not(:disabled)').length;
+  await layerKey("a");
+  check(host.querySelectorAll(".layer-card.selected").length === selectableCount && selectableCount > 1 &&
+    getComputedStyle(host.querySelector(".settings-panel")!).display === "none" && getComputedStyle(host.querySelector(".layers-panel")!).display === "none" &&
+    host.querySelector('[aria-label="当前缩放比例"]')!.textContent === allZoom, "Ctrl+A全选保持两个面板收起及原缩放");
+  check(["置顶", "上移一层", "下移一层", "置底"].every(label => button(label).disabled), "全选形成多选后禁用四个排序按钮");
+  button("展开图层").click(); await paint();
+  host.querySelector<HTMLButtonElement>(`[data-layer-id="${oldId}"] .layer-select`)!.click(); await paint();
+  button("操作帮助").click(); await paint();
+  const helpText = host.querySelector(".shortcut-help-dialog")!.textContent!;
+  check(helpText.includes("全选可编辑图层") && helpText.includes("Ctrl+A") && helpText.includes("Ctrl+Shift+↓") &&
+    host.querySelectorAll(".shortcut-list > div").length === 24, "帮助以全选一行及排序两行展示新增快捷键");
+  button("关闭操作帮助").click(); await paint();
+  await menuKey(row());
   command("锁定图层").click(); await paint();
   check(!host.querySelector(".layer-card.selected") && host.querySelector(`[data-layer-id="${oldId}"]`)!.textContent!.includes("已锁定"), "菜单锁定沿用取消对应选择与保留工作区规则");
   document.getElementById("results")!.textContent = reports.join("\n") + `\n\n全部通过，共 ${reports.length} 项`;
