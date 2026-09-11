@@ -51,7 +51,7 @@ export function TextPanel({ text, engine, disabled, selected, editing, vertical,
       </div>
     </div>
     <div className="property-grid" role="group" aria-label="字号与对齐">
-      <NumberField engine={engine} showRangeHint label="字号" value={text.fontSize} min={8} max={500} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("fontSize", value)} />
+      <NumberField engine={engine} label="字号" value={text.fontSize} min={8} max={500} unit="px" relativeStep onChange={value => engine.updateTextNumber("fontSize", value)} />
       <label className="property-field"><span>对齐</span><select aria-label="对齐" value={text.textAlign}
         title={text.textAlign === "justify-left" ? "文本框内两端对齐；段落末行保持起始对齐" : "文本框内对齐"}
         onChange={event => update({ textAlign: event.target.value })}>
@@ -62,43 +62,43 @@ export function TextPanel({ text, engine, disabled, selected, editing, vertical,
       </select></label>
     </div>
     <div className="property-grid" role="group" aria-label="字距与行距">
-      <NumberField engine={engine} showRangeHint label="字距" value={spacingPx} min={-20} max={100} step={.1} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("charSpacing", value)} />
-      <NumberField engine={engine} showRangeHint label="行距" value={text.lineHeight} min={.6} max={3} step={.05} unit="倍" cancelOnEscape onChange={value => engine.updateTextNumber("lineHeight", value)} />
+      <NumberField engine={engine} label="字距" value={spacingPx} min={-20} max={100} step={.1} unit="px" onChange={value => engine.updateTextNumber("charSpacing", value)} />
+      <NumberField engine={engine} label="行距" value={text.lineHeight} min={.6} max={3} step={.05} unit="倍" onChange={value => engine.updateTextNumber("lineHeight", value)} />
     </div>
     <ColorField label="文字颜色" value={text.fill} channel="fill" engine={engine} />
     <label className="check-field"><input type="checkbox" checked={text.background} onChange={event => update({ background: event.target.checked })} />背景填充</label>
     {text.background && <div className="background-settings">
       <ColorField label="背景颜色" value={text.backgroundColor} channel="backgroundColor" engine={engine} />
       <div className="shape-number-control">
-        <NumberField engine={engine} showRangeHint label="背景不透明度" value={backgroundOpacity} min={0} max={100} unit="%" cancelOnEscape onChange={value => engine.updateTextBackgroundOpacity(value, false)} />
+        <NumberField engine={engine} label="背景不透明度" value={backgroundOpacity} min={0} max={100} unit="%" onChange={value => engine.updateTextBackgroundOpacity(value, false)} />
         <PropertySlider label="文字背景不透明度滑块" min={0} max={100} value={backgroundOpacity}
           change={value => engine.updateTextBackgroundOpacity(value, false)} commit={() => engine.finishPropertyEdit()} />
       </div>
       <p className="field-help">{backgroundOpacity === 0 ? "背景完全透明，可调高不透明度恢复。" : "仅调整背景，文字、描边和阴影不变。"}</p>
       <div className="property-grid">
-        <NumberField engine={engine} showRangeHint label="背景留白" value={text.backgroundPadding} min={0} max={200} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("backgroundPadding", value)} />
-        <NumberField engine={engine} showRangeHint label="背景圆角" value={text.backgroundRadius} min={0} max={200} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("backgroundRadius", value)} />
+        <NumberField engine={engine} label="背景留白" value={text.backgroundPadding} min={0} max={200} unit="px" onChange={value => engine.updateTextNumber("backgroundPadding", value)} />
+        <NumberField engine={engine} label="背景圆角" value={text.backgroundRadius} min={0} max={200} unit="px" onChange={value => engine.updateTextNumber("backgroundRadius", value)} />
       </div>
     </div>}
     <details className="text-effects"><summary>更多效果{activeEffects && <span className="text-effects-summary">{activeEffects}</span>}</summary>
       <div className="shape-number-control">
-        <NumberField engine={engine} showRangeHint label="不透明度" value={opacity} min={0} max={100} unit="%" cancelOnEscape onChange={value => engine.updateTextOpacity(value, false)} />
+        <NumberField engine={engine} label="不透明度" value={opacity} min={0} max={100} unit="%" onChange={value => engine.updateTextOpacity(value, false)} />
         <PropertySlider label="文字不透明度滑块" min={0} max={100} value={opacity}
           change={value => engine.updateTextOpacity(value, false)} commit={() => engine.finishPropertyEdit()} />
       </div>
       <p className="field-help">{opacity === 0 ? selected ? "文字完全透明，可调整不透明度恢复。" : "当前为 0%，新添加的文字将不可见。" : "文字、背景、描边和阴影一起调整。"}</p>
       <label className="check-field"><input type="checkbox" checked={text.strokeEnabled ?? text.strokeWidth > 0} onChange={event => update({ strokeEnabled: event.target.checked })} />文字描边</label>
       {text.strokeEnabled && <>
-        <NumberField engine={engine} showRangeHint label="描边粗细" value={text.strokeWidth} min={1} max={30} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("strokeWidth", value)} />
+        <NumberField engine={engine} label="描边粗细" value={text.strokeWidth} min={1} max={30} unit="px" onChange={value => engine.updateTextNumber("strokeWidth", value)} />
         <ColorField label="描边颜色" value={text.stroke} channel="stroke" engine={engine} />
       </>}
       <label className="check-field"><input type="checkbox" checked={!!text.shadowEnabled} onChange={event => update({ shadowEnabled: event.target.checked })} />文字阴影</label>
       {text.shadowEnabled && <>
         <ColorField label="阴影颜色" value={text.shadowColor.startsWith("#") ? text.shadowColor : "#000000"} channel="shadowColor" engine={engine} />
-        <NumberField engine={engine} showRangeHint label="阴影模糊" value={text.shadowBlur} min={0} max={100} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("shadowBlur", value)} />
+        <NumberField engine={engine} label="阴影模糊" value={text.shadowBlur} min={0} max={100} unit="px" onChange={value => engine.updateTextNumber("shadowBlur", value)} />
         <div className="property-grid">
-          <NumberField engine={engine} showRangeHint label="水平偏移" value={text.shadowOffsetX} min={-100} max={100} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("shadowOffsetX", value)} />
-          <NumberField engine={engine} showRangeHint label="垂直偏移" value={text.shadowOffsetY} min={-100} max={100} unit="px" cancelOnEscape onChange={value => engine.updateTextNumber("shadowOffsetY", value)} />
+          <NumberField engine={engine} label="水平偏移" value={text.shadowOffsetX} min={-100} max={100} unit="px" onChange={value => engine.updateTextNumber("shadowOffsetX", value)} />
+          <NumberField engine={engine} label="垂直偏移" value={text.shadowOffsetY} min={-100} max={100} unit="px" onChange={value => engine.updateTextNumber("shadowOffsetY", value)} />
         </div>
       </>}
     </details>

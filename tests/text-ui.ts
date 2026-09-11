@@ -20,7 +20,12 @@ const check = (value: boolean, message: string) => {
 const host = document.getElementById("test-root")!, root = createRoot(host);
 const paint = async () => { await frame(); await frame(); };
 const button = (name: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
-const ready = async () => { await settle(() => !!button("添加文字") && !button("添加文字").disabled); await paint(); };
+const ready = async () => {
+  // Let React publish the pending state, including disabled inherited from the fieldset.
+  await paint();
+  await settle(() => !!button("添加文字") && !button("添加文字").matches(":disabled"));
+  await paint();
+};
 const field = (name: string) => host.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
 const number = async (name: string, value: string, end: string) => {
   const element = field(name); element.focus();

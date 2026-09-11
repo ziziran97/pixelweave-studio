@@ -88,7 +88,7 @@ export class EditorController {
   private propertyEdit = false;
   private numberEdit?: NumberEdit;
   private clipboard?: { data: ObjectData[]; offset: number };
-  private clipboardFocus = false;
+  private keyboardFocus = false;
   private nudgeKeys = new Set<string>();
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
   private drawingHintShown = false;
@@ -229,7 +229,7 @@ export class EditorController {
     window.addEventListener("keydown", this.keyDown);
     window.addEventListener("keyup", this.keyUp);
     window.addEventListener("blur", this.windowBlur);
-    window.addEventListener("focusin", this.finishNudge);
+    window.addEventListener("focusin", this.windowFocusIn);
     document.addEventListener("visibilitychange", this.finishNudge);
     window.addEventListener("pointerdown", this.windowPointerDown, true);
     window.addEventListener("pointerup", this.windowPointerUp, true);
@@ -723,6 +723,8 @@ export class EditorController {
   }
   async startColorPick(apply: (color: string) => void, cancel?: () => void) {
     if ((this.locked && !this.colorEdit) || this.busy || this.colorPick || this.gestureActive || this.selection.draft || this.shapeDraft) { cancel?.(); return; }
+    // The color popover is a portal; return its keyboard ownership to the canvas while sampling.
+    this.keyboardFocus = true; this.viewport.focus({ preventScroll: true });
     this.finishText(); this.busy = true; this.preparingColorPick = cancel ?? (() => {}); this.configure(); this.emit();
     const generation = this.generation, request = ++this.pickRequest;
     try {
@@ -1086,7 +1088,7 @@ export class EditorController {
     return { x: Math.max(0, Math.min(this.size.width, point.x)), y: Math.max(0, Math.min(this.size.height, point.y)) };
   }
   private pointerDown(event: TPointerEventInfo) {
-    this.clipboardFocus = true;
+    this.keyboardFocus = true;
     this.finishPropertyEdit();
     if (this.colorPick && (event.e as MouseEvent).button === 0) {
       const point = this.canvas.getScenePoint(event.e);
@@ -1306,11 +1308,12 @@ export class EditorController {
     const object = this.positionTarget(), direction = POSITION_KEYS[event.key];
     const target = event.target instanceof Element ? event.target : undefined;
     const app = this.viewport.closest(".app-shell");
+    const root = app ?? this.viewport;
     // Only the canvas, layer selection and position controls own movement keys.
     const inEditor = !target || target === document.body || this.viewport.contains(target) ||
       (!!app?.contains(target) && !!target.closest(".layer-select,.layer-card,.layer-position"));
     const control = target?.closest("input,textarea,select,[contenteditable='true'],dialog,[role='dialog'],[role='menu'],[role='listbox'],button,a[href],summary,[role='button'],[role='slider']");
-    const ownsKeys = control && !control.matches(".layer-select,.layer-position button");
+    const ownsKeys = control && control !== root && root.contains(control) && !control.matches(".layer-select,.layer-position button");
     if (!direction || !object || (object instanceof Textbox && object.isEditing) || event.ctrlKey || event.metaKey || event.altKey ||
       !inEditor || ownsKeys || (event.repeat && !this.nudgeKeys.has(event.key))) { this.finishNudge(); return; }
     event.preventDefault(); event.stopPropagation();
@@ -1851,6 +1854,19 @@ export class EditorController {
     }
   }
   private isInput(target: EventTarget | null) { return target instanceof HTMLElement && !!target.closest("input,textarea,select,[contenteditable='true']"); }
+  private isEditorTarget(target: EventTarget | null) {
+    const root = this.viewport.closest(".app-shell") ?? this.viewport;
+    return target instanceof Element && root.contains(target);
+  }
+  private ownsKeyboard(event: KeyboardEvent) {
+    if (this.disposed || this.closed) return false;
+    if (!this.isEditorTarget(event.target) && !(event.target === document.body && this.keyboardFocus)) return false;
+    const root = this.viewport.closest(".app-shell") ?? this.viewport;
+    // A host dialog can contain the editor. Other visible dialogs own their own keys;
+    // hidden color popovers must not block Esc after focus returns to the canvas.
+    return ![...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")]
+      .some(dialog => dialog.getClientRects().length > 0 && !dialog.contains(root));
+  }
   private layerShortcut(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
     const selectAll = event.key.toLowerCase() === "a" && !event.shiftKey;
@@ -1858,11 +1874,9 @@ export class EditorController {
     if (!selectAll && !order) return false;
     const target = event.target instanceof Element ? event.target : undefined;
     const root = this.viewport.closest(".app-shell") ?? this.viewport;
-    const inEditor = !!target && (root.contains(target) || (target === document.body && this.clipboardFocus));
     const control = target?.closest("input,textarea,select,[contenteditable],dialog,[role='dialog'],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']");
     const ownsKeys = control && control !== root && root.contains(control);
-    const blockedByDialog = [...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")].some(dialog => !dialog.contains(root));
-    if (!inEditor || ownsKeys || blockedByDialog || this.locked || this.space || this.maskHidden || this.gestureActive ||
+    if (ownsKeys || this.locked || this.space || this.maskHidden || this.gestureActive ||
       this.selection.draft || this.shapeDraft || this.preparingColorPick || (this.tool !== "select" && this.tool !== "text") ||
       this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
     event.preventDefault(); event.stopPropagation();
@@ -1889,13 +1903,9 @@ export class EditorController {
     if ((key !== "v" && key !== "h" && key !== "d") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return false;
     const target = event.target instanceof Element ? event.target : undefined;
     const root = this.viewport.closest(".app-shell") ?? this.viewport;
-    const inEditor = !!target && (root.contains(target) ||
-      (target === document.body && this.clipboardFocus));
     const control = target?.closest("input,textarea,select,[contenteditable],dialog,[role='dialog'],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']");
     const ownsKeys = control && control !== root && root.contains(control);
-    // An ERP dialog may contain the entire editor; only other dialogs block its shortcuts.
-    const blockedByDialog = [...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")].some(dialog => !dialog.contains(root));
-    if (!inEditor || ownsKeys || blockedByDialog || this.locked ||
+    if (ownsKeys || this.locked ||
       this.space || this.maskHidden || this.gestureActive || this.selection.draft || this.shapeDraft || this.preparingColorPick ||
       this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
     event.preventDefault(); event.stopPropagation();
@@ -1908,11 +1918,11 @@ export class EditorController {
     return true;
   }
   private keyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.defaultPrevented || !this.ownsKeyboard(event)) return;
     if (!POSITION_KEYS[event.key] && event.key !== "Shift") this.finishNudge();
     if (this.confirmation) return;
     if (this.submitting || this.savedRecord || this.closed) { if (["Escape", "Enter", "Delete", "Backspace"].includes(event.key)) event.preventDefault(); return; }
     if ((this.colorPick || this.preparingColorPick) && event.key === "Escape") { event.preventDefault(); this.cancelColorPick(); return; }
-    if (event.isComposing || event.defaultPrevented) return;
     if (this.layerShortcut(event)) return;
     if (POSITION_KEYS[event.key]) { this.nudgeSelection(event); return; }
     const command = event.ctrlKey || event.metaKey;
@@ -1933,10 +1943,7 @@ export class EditorController {
       event.preventDefault(); void this.undo(event.shiftKey);
     }
     if (command && event.key.toLowerCase() === "y") { event.preventDefault(); void this.undo(true); }
-    const target = event.target instanceof Element ? event.target : undefined;
-    const ownsClipboard = !!target && (this.viewport.contains(target) || !!this.viewport.closest(".app-shell")?.contains(target) ||
-      (target === document.body && this.clipboardFocus));
-    if (command && !event.altKey && !event.shiftKey && ownsClipboard) {
+    if (command && !event.altKey && !event.shiftKey) {
       if (event.key.toLowerCase() === "c" && this.copyableLayers().length) { event.preventDefault(); if (!event.repeat) this.copySelected(); }
       if (event.key.toLowerCase() === "v" && this.clipboard) { event.preventDefault(); if (!event.repeat) void this.pasteLayer(); }
       if (event.key.toLowerCase() === "d") { event.preventDefault(); if (!event.repeat) void this.duplicateSelected(); }
@@ -1956,14 +1963,18 @@ export class EditorController {
     if (event.key === "Enter" && this.tool === "erase" && this.selection.mode === "lasso") { event.preventDefault(); this.finishLasso(); }
   };
   private keyUp = (event: KeyboardEvent) => {
+    // Always finish an owned gesture even when its release happens outside the editor.
     if (this.nudgeKeys.delete(event.key) && !this.nudgeKeys.size) this.finishPropertyEdit();
     if (event.code === "Space" && this.space) {
       this.selection.endMove(); this.space = false; this.panning = undefined; this.configure();
     }
   };
+  private windowFocusIn = (event: FocusEvent) => {
+    this.keyboardFocus = this.isEditorTarget(event.target);
+    this.finishNudge();
+  };
   private windowPointerDown = (event: PointerEvent) => {
-    const target = event.target instanceof Element ? event.target : undefined;
-    this.clipboardFocus = !!target && (this.viewport.contains(target) || !!this.viewport.closest(".app-shell")?.contains(target));
+    this.keyboardFocus = this.isEditorTarget(event.target);
     this.finishNudge();
     if (event.button === 0 && !this.gestureActive && event.target === this.canvas.upperCanvasEl) this.pointerId = event.pointerId;
   };
@@ -2004,7 +2015,7 @@ export class EditorController {
     this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
     this.colorPick = undefined; this.disposed = true; this.generation++; this.job?.controller.abort(); this.observer.disconnect();
     window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp); window.removeEventListener("blur", this.windowBlur);
-    window.removeEventListener("focusin", this.finishNudge); document.removeEventListener("visibilitychange", this.finishNudge);
+    window.removeEventListener("focusin", this.windowFocusIn); document.removeEventListener("visibilitychange", this.finishNudge);
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);
     window.removeEventListener("pointerdown", this.windowPointerDown, true);
     window.removeEventListener("beforeunload", this.beforeUnload);

@@ -75,7 +75,7 @@ try {
   const cancelSampling = async () => {
     const before = draftState(); action("取色").click(); await settle(() => !!host.querySelector(".picking-hint")); await paint();
     check(!document.querySelector('.color-popover')!.contains(document.activeElement), "取色时隐藏面板不占用键盘焦点");
-    await esc(window); check(draftState() === before && document.activeElement === dialog(), "取消取色完整保留输入、格式、色相与色板位置并恢复焦点");
+    await esc(host.querySelector(".canvas-viewport")!); check(draftState() === before && document.activeElement === dialog(), "取消取色完整保留输入、格式、色相与色板位置并恢复焦点");
   };
   await cancelSampling();
   for (const [mode, label, invalid] of [["HEX", "HEX 颜色", "12"], ["RGB", "RGB R", ""], ["HSL", "HSL H", "361"]]) {
@@ -113,7 +113,7 @@ try {
   check(!dialog(), "弹窗内取色暂时收起颜色面板");
   mouse("mousemove", 180, 100); await paint();
   check(!!document.querySelector(".color-lens") && document.querySelector(".color-lens span")!.textContent === "#FFFFFF", "取色放大镜显示图内实际采样颜色");
-  await esc(window);
+  await esc(host.querySelector(".canvas-viewport")!);
   check(!!dialog() && dialog()!.querySelector<HTMLSelectElement>('select[aria-label="颜色格式"]')!.value === "RGB" &&
     [...dialog()!.querySelectorAll<HTMLInputElement>('.color-inputs input')].map(input => input.value).join() === "34,51,68", "Esc 只取消取色，保留此前颜色草稿和 RGB 格式");
   action("取色").click(); await settle(() => !!host.querySelector(".picking-hint"));

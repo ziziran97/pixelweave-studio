@@ -9,7 +9,7 @@ export function DrawingPanel({ view, engine, disabled }: { view: EditorView; eng
   const setWidth = (value: number) => view.drawing ? engine.updateDrawing({ width: value }, false) : engine.setDrawSize(value);
   return <fieldset disabled={disabled}>
     <div className="shape-number-control drawing-width-control">
-      <NumberField engine={engine} label="画笔粗细" value={width} min={1} max={300} unit="px" cancelOnEscape onChange={setWidth} />
+      <NumberField engine={engine} label="画笔粗细" value={width} min={1} max={300} unit="px" onChange={setWidth} />
       <PropertySlider className="drawing-size" label="画笔粗细滑块" min={1} max={300} value={width}
         change={value => view.drawing ? engine.updateDrawing({ width: value }, false) : engine.setDrawSize(value)} commit={() => engine.finishPropertyEdit()} />
     </div>

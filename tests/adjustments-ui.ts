@@ -31,7 +31,13 @@ const range = async (label: string, values: number[], finish: "pointerup" | "key
   else field.blur();
   await paint();
 };
-const undo = async (redo = false) => { button(redo ? "重做" : "撤销").click(); await settle(() => !button("调色").disabled); await paint(); };
+const undo = async (redo = false) => {
+  button(redo ? "重做" : "撤销").click();
+  // Wait for React to publish the asynchronous restore before checking readiness.
+  await paint();
+  await settle(() => !button("调色").matches(":disabled"));
+  await paint();
+};
 try {
   root.render(createElement(App, { integration: {
     initialImage: await picture("#6080a0"), context: { taskId: "adjustments", imageId: "sample" },

@@ -79,6 +79,59 @@ try {
   field("字号").dispatchEvent(focusedWheel); await paint();
   check(Number(field("字号").value) === last + 1 && focusedWheel.defaultPrevented, "聚焦且位于数字框上方的滚轮立即微调并阻止画布缩放");
   field("字号").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await paint();
+  const sizeKey = async (key: string, options: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+    field("字号").dispatchEvent(event); await paint(); return event;
+  };
+  await input("字号", "32.4"); await sizeKey("Enter");
+  check(field("字号").value === "32.4" && field("字号").validity.valid, "小数字号保留且不被原生整数步长判为无效");
+  button("增大字号").click(); await paint();
+  check(field("字号").value === "33.4" && document.activeElement === field("字号"), "字号步进按钮加1保留小数并保持输入焦点");
+  check((await sizeKey("ArrowDown")).defaultPrevented && field("字号").value === "32.4", "字号上下键与步进按钮相反操作可恢复原小数");
+  field("字号").dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true })); await paint();
+  check(field("字号").value === "33.4", "小数字号滚轮同样加1，不对齐整数");
+  button("减小字号").click(); await paint();
+  check(field("字号").value === "32.4", "字号向下步进减1并保留小数");
+  await sizeKey("ArrowUp"); await sizeKey("ArrowUp", { repeat: true }); await sizeKey("Enter");
+  check(field("字号").value === "34.4", "字号上下键支持长按重复，回车保留最终小数");
+  button("撤销").click(); await ready();
+  check(field("字号").value === "32.4" && row().dataset.layerId === selectedId, "混合按钮、滚轮及方向键连续调整只需一步撤销，保留选中文字");
+  button("重做").click(); await ready();
+  check(field("字号").value === "34.4", "重做恢复整轮字号微调");
+  button("增大字号").click(); await paint(); await sizeKey("Escape");
+  check(field("字号").value === "34.4" && document.activeElement === field("字号"), "步进后Esc还原起点并保留焦点");
+  const nativeSpacing = field("字距");
+  check(nativeSpacing.step === "0.1" && field("行距").step === "0.05" && !button("增大字距"), "仅字号启用相对步进，字距和行距保留原生步长");
+  for (const [start, name, end] of [["499.75", "增大字号", "500"], ["8.25", "减小字号", "8"]]) {
+    await input("字号", start); await sizeKey("Enter");
+    button(name).click(); await paint(); button(name).click(); await paint();
+    check(field("字号").value === end, "小数字号在范围边缘限制到真实上下限，重复步进不越界");
+    await sizeKey("Escape");
+    check(field("字号").value === start, "边界步进取消后恢复原小数");
+  }
+  await input("字号", "32.4"); await sizeKey("Enter");
+  await input("字号", ""); button("增大字号").click(); await paint();
+  check(field("字号").value === "33.4", "空字号草稿按最后有效字号继续微调");
+  await sizeKey("Escape");
+  // Pointer capture requires real browser input; suppress it only for this synthetic hold lifecycle.
+  const holdButton = button("增大字号"), capture = holdButton.setPointerCapture;
+  holdButton.setPointerCapture = () => {};
+  const hold = () => holdButton.dispatchEvent(new PointerEvent("pointerdown", { button: 0, pointerId: 9, isPrimary: true, bubbles: true, cancelable: true }));
+  try {
+    hold(); await new Promise(resolve => setTimeout(resolve, 510)); await paint();
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    const heldSize = field("字号").value;
+    check(Number(heldSize) >= 34.4 && Math.abs(Number(heldSize) % 1 - .4) < .00001, "长按步进连续改变字号且保留小数");
+    await new Promise(resolve => setTimeout(resolve, 130)); await paint();
+    check(field("字号").value === heldSize, "松手后停止步进，不残留计时修改");
+    await sizeKey("Escape");
+    check(field("字号").value === "32.4", "长按后Esc整轮还原");
+    hold(); window.dispatchEvent(new Event("blur")); await paint();
+    await new Promise(resolve => setTimeout(resolve, 450)); await paint();
+    check(field("字号").value === "33.4", "窗口失焦收尾并停止长按");
+    field("字号").blur(); button("撤销").click(); await ready();
+    check(field("字号").value === "32.4", "失焦收尾的长按可一步撤销");
+  } finally { holdButton.setPointerCapture = capture; window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 9 })); }
   host.querySelector<HTMLDetailsElement>(".text-effects")!.open = true; await paint();
   const opacity = await input("不透明度", "12.7"); opacity.blur(); await paint();
   check(field("不透明度").value === "13", "整数属性结束输入后回显实际归一化值，不遗留与画布不同的小数");
