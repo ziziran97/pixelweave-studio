@@ -4,6 +4,7 @@ import { Brush, CircleHelp, Eraser, PanelLeftClose, RotateCcwSquare, Hand, Image
 import { EditorController } from "./editor/EditorController";
 import { validatePreviewTexts } from "./editor/previewTextValidation";
 import { previewReplacement } from "./editor/previewReplacement";
+import { isLocalEraseTest, isPureDemo } from "./config";
 import { DEFAULT_ADJUSTMENTS } from "./types";
 import type { EditorView, ToolId } from "./types";
 import { DEFAULT_SHAPE } from "./editor/shape";
@@ -47,6 +48,10 @@ const EMPTY: EditorView = {
 
 export default function App({ integration, preview = false }: { integration?: EditorIntegration; preview?: boolean }) {
   const previewOnly = !!validatePreviewTexts && preview && !integration;
+  const standaloneLabel = !integration && (previewOnly || isLocalEraseTest)
+    ? isLocalEraseTest ? `真实消除测试 · ${previewOnly ? "检测与保存为模拟" : "未接入任务保存"}`
+      : isPureDemo ? "纯演示 · 不保存到任务" : "开发预览 · 检测与保存为模拟"
+    : undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null), overlayRef = useRef<HTMLCanvasElement>(null), viewportRef = useRef<HTMLDivElement>(null), fileRef = useRef<HTMLInputElement>(null);
   const [engine, setEngine] = useState<EditorController | null>(null);
   const [view, setView] = useState<EditorView>(EMPTY);
@@ -155,8 +160,8 @@ export default function App({ integration, preview = false }: { integration?: Ed
   if (view.closed) return <div className="editor-closed"><h1>{view.saved ? "图片已替换" : "编辑已关闭"}</h1><p>请返回审核页面继续操作。</p></div>;
   return <div className="app-shell" onKeyDown={handleLayerMenuKey}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{previewOnly && <small className="preview-label" title="独立预览：模拟违禁词 durable、supreme（完整单词，不区分大小写），不会保存到任务">演示 · 模拟违禁词 durable、supreme</small>}</span>
-        {previewOnly && previewReplacement && <label className="preview-scenario"><span>演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "success"}
+      <div className="brand"><span className="brand-mark"><svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 5h7l5 7 5-7h7L20 16l8 11h-7l-5-7-5 7H4l8-11Z" /></svg></span><span><strong>自研图像编辑能力</strong>{standaloneLabel && <small className="preview-label" title={previewOnly ? "文案检测与替换流程均为模拟，不会保存到任务；模拟违禁词 durable、supreme（完整单词，不区分大小写）" : "消除通过本机转发测试，任务检测与保存需宿主接入"}>{standaloneLabel}</small>}</span>
+        {previewOnly && previewReplacement && <label className="preview-scenario"><span>替换流程演示场景</span><select aria-label="替换流程演示场景" disabled={locked} value={view.previewScenario ?? "success"}
           onChange={event => engine?.setPreviewScenario(event.target.value)}>{previewReplacement.scenarios.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
       </div>
       <div className="top-actions" role="group" aria-label="编辑与对比">
@@ -234,6 +239,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
     <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
     {(view.submitting || view.saved) && engine && <SubmissionDialog view={view} engine={engine} previewOnly={previewOnly} />}
     {view.pending && <ResultPreview key={view.pending.assetId} result={view.pending} size={view.size} busy={view.busy} suspended={!!view.confirmation} accept={() => void engine?.acceptResult()} discard={() => engine?.discardResult()} retryPreview={() => void engine?.retryResultPreview()}
+      replacementMode={previewOnly ? "simulated" : !integration ? "unavailable" : undefined}
       onPreviewState={(outcome, attempt) => engine?.reportErasePreview(view.pending!.assetId, view.pending!.beforeUrl, view.pending!.afterUrl, outcome, attempt)} />}
     {view.confirmation && engine && <ConfirmationDialog key={view.confirmation.id} confirmation={view.confirmation} previewOnly={previewOnly} retryPreview={id => void engine.retryReplacementPreview(id)} answer={(id, accepted) => engine.answerConfirmation(id, accepted)} />}
     {helpOpen && <ShortcutHelp close={() => setHelpOpen(false)} />}

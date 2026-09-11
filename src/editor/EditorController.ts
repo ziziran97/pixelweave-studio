@@ -1,6 +1,6 @@
 import { ActiveSelection, Ellipse, FabricImage, Path, Point, Rect, Textbox, util } from "fabric";
 import type { FabricObject, TPointerEventInfo } from "fabric";
-import { editorConfig } from "../config";
+import { editorConfig, isLocalEraseTest, isPureDemo } from "../config";
 import { callEraseApi, eraseFailureCode } from "../lib/eraseApi";
 import { fetchImageBlob } from "../lib/imageLoading";
 import { checkImageFileSize, checkEraseFileSizes } from "../lib/imageLimits";
@@ -402,8 +402,9 @@ export class EditorController {
     this.finishText(); this.cancelDraft();
     const token = ++this.generation;
     this.busy = true; this.configure(); this.notice = "正在打开图片…"; this.emit();
+    const pin = uid("loading"), heldAssets = new Set<string>(); this.processingAssets.set(pin, heldAssets);
     try {
-      const asset = await this.assets.add(blob);
+      const asset = await this.assets.add(blob, heldAssets);
       if (this.disposed || token !== this.generation) return;
       const snapshot: DocumentSnapshot = { size: { width: asset.width, height: asset.height }, objects: [this.imageData(asset, name)], masks: [], source: "online",
         adjustments: { ...DEFAULT_ADJUSTMENTS } };
@@ -416,7 +417,10 @@ export class EditorController {
       this.notice = "图片已就绪，可以开始编辑";
       this.tool = "select"; this.fit();
     } catch (error) { this.report(error); }
-    finally { if (!this.disposed && token === this.generation) { this.busy = false; this.collect(); this.configure(); this.emit(); } }
+    finally {
+      this.processingAssets.delete(pin);
+      if (!this.disposed && token === this.generation) { this.busy = false; this.collect(); this.configure(); this.emit(); }
+    }
   }
 
   private async loadSnapshot(snapshot: DocumentSnapshot, token = this.generation) {
@@ -783,9 +787,10 @@ export class EditorController {
     if ((this.dirty || this.job || this.pending || this.selection.draft || this.shapeDraft) && !await this.confirmAction("upload")) return;
     this.busy = true; this.configure(); this.notice = "正在校验并载入图片…"; this.emit();
     const token = this.generation;
+    const pin = uid("loading"), heldAssets = new Set<string>(); this.processingAssets.set(pin, heldAssets);
     try {
       const { jpeg, converted } = await prepareUploadedImage(file);
-      const asset = await this.assets.add(jpeg);
+      const asset = await this.assets.add(jpeg, heldAssets);
       if (this.disposed || token !== this.generation) return;
       const next: DocumentSnapshot = { size: { width: asset.width, height: asset.height }, objects: [this.imageData(asset, "上传图片")],
         masks: [], source: "upload", adjustments: { ...DEFAULT_ADJUSTMENTS } };
@@ -799,7 +804,10 @@ export class EditorController {
       this.tool = "select"; this.notice = converted ? "已转为 JPG，透明区域以白色填充。可继续编辑；点击「替换图片」后保存到任务。" : "图片已载入，可继续编辑；点击「替换图片」后保存到任务。"; this.fit();
       return true;
     } catch (error) { this.report(error); }
-    finally { if (!this.disposed) { this.busy = false; this.configure(); this.collect(); this.emit(); } }
+    finally {
+      this.processingAssets.delete(pin);
+      if (!this.disposed) { this.busy = false; this.configure(); this.collect(); this.emit(); }
+    }
   }
   private addedTexts(): AddedText[] {
     return this.canvas.getObjects().flatMap(object => object instanceof Textbox && object.text.trim()
@@ -1565,7 +1573,7 @@ export class EditorController {
   }
 
   private canPreviewErase() {
-    if (!previewErase || !this.preview || this.integration || editorConfig.eraseApiUrl || !this.previewEraseBaseId) return false;
+    if (!previewErase || !this.preview || this.integration || isLocalEraseTest || editorConfig.eraseApiUrl || !this.previewEraseBaseId) return false;
     const base = this.canvas.getObjects().find(object => object.editorPurpose === "base");
     return base instanceof FabricImage && base.editorAssetId === this.previewEraseBaseId && !base.filters.length;
   }
@@ -1609,7 +1617,12 @@ export class EditorController {
     if (!this.hasMask) { this.notice = "当前选区为空，请先添加需要修改的区域"; this.emit(); return; }
     const apiUrl = editorConfig.eraseApiUrl;
     const illustrative = !!previewErase && this.canPreviewErase();
-    if (!apiUrl && !illustrative) { this.notice = "消除服务尚未接入，图片和选区已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
+    if (!apiUrl && !illustrative) {
+      this.notice = isPureDemo && this.preview && !this.integration
+        ? "当前为纯演示，仅支持默认样图的固定结果演示；图片和选区已保留"
+        : "消除服务尚未接入，图片和选区已保留";
+      this.noticePresentation = "persistent"; this.emit(); return;
+    }
     if (this.selection.draft || this.shapeDraft) { this.notice = "请先完成或取消当前未闭合选区／图形"; this.emit(); return; }
     if (illustrative && !previewErase!.matches(this.masks)) {
       this.notice = "固定样图演示仅支持预设标签区域，请点击「选择示例标签区域」后再开始"; this.noticePresentation = "persistent"; this.emit(); return;
@@ -1642,13 +1655,12 @@ export class EditorController {
       if (!current()) return;
       this.setEraseStage("preview");
       let asset: ImageAsset;
-      try { asset = await this.assets.add(result); }
+      try { asset = await this.assets.add(result, heldAssets); }
       catch (error) {
         if (!current()) return;
         if (error instanceof ImageSizeError) throw new Error("消除结果宽、高均不能超过 5000 px");
         throw new Error("消除结果图片无法读取，请稍后重试");
       }
-      heldAssets.add(asset.id);
       if (!current()) return;
       if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("消除结果尺寸与当前图片不一致，未采用，请稍后重试");
       run?.requestFinished("success");

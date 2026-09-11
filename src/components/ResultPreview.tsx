@@ -7,6 +7,7 @@ type Camera = { zoom: number | null; x: number; y: number };
 type PreviewImages = Pick<PendingResult, "beforeUrl" | "afterUrl" | "region" | "previewError" | "previewPreparing" | "acceptError" | "illustrative">;
 type ResultPreviewProps = {
   result: PreviewImages | PendingResult; size: DocumentSize; busy: boolean; suspended?: boolean;
+  replacementMode?: "simulated" | "unavailable";
 } & ({
   example: true; closeExample: () => void;
   accept?: never; discard?: never; retryPreview?: never; onPreviewState?: never;
@@ -16,9 +17,10 @@ type ResultPreviewProps = {
   onPreviewState?: (outcome: "shown" | "failed", loadAttempt: number) => void;
 });
 
-export function ResultPreview({ result, size, busy, suspended = false, accept, discard, retryPreview, onPreviewState, example: requestedExample = false, closeExample }: ResultPreviewProps) {
+export function ResultPreview({ result, size, busy, suspended = false, replacementMode, accept, discard, retryPreview, onPreviewState, example: requestedExample = false, closeExample }: ResultPreviewProps) {
   const example = (import.meta.env.DEV || import.meta.env.MODE === "demo") && requestedExample;
   const illustrative = (import.meta.env.DEV || import.meta.env.MODE === "demo") && result.illustrative;
+  const simulatedReplacement = (import.meta.env.DEV || import.meta.env.MODE === "demo") && replacementMode === "simulated";
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const panes = useRef<Array<HTMLDivElement | null>>([]);
@@ -127,7 +129,10 @@ export function ResultPreview({ result, size, busy, suspended = false, accept, d
     onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}
     onCancel={event => { event.preventDefault(); if (example) dismissExample(); }}>
     <h2 id="result-title">检查消除结果</h2>
-    <p>{example ? "固定样例 · 效果示意，未调用消除服务。" : illustrative ? "固定样图流程演示 · 未调用消除服务。使用后更新当前编辑草稿，未保存到任务。" : "使用后可继续编辑，点击右上角“替换图片”才会保存到任务。"}</p>
+    <p>{example ? "固定样例 · 效果示意，未调用消除服务。" : illustrative ? "固定样图流程演示 · 未调用消除服务。使用后更新当前编辑草稿，未保存到任务。"
+      : simulatedReplacement ? "使用后更新当前编辑草稿；替换流程为模拟，不会保存到任务。"
+      : replacementMode === "unavailable" ? "使用后可继续编辑；当前未接入任务保存。"
+      : "使用后可继续编辑，点击右上角“替换图片”才会保存到任务。"}</p>
     <div className="result-view-tools">
       <span>滚轮缩放，拖动查看；两侧同步</span>
       <div role="group" aria-label="结果查看">
