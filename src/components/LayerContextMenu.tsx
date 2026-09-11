@@ -79,14 +79,18 @@ export function LayerContextMenu({ position, view, engine, close }: {
         items[next]?.focus({ preventScroll: true });
       } else if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
         const key = event.key.toLowerCase();
-        if (key === "c" && single) { event.preventDefault(); run(() => engine.copySelected()); }
-        else if (key === "v" && view.canPasteLayer) { event.preventDefault(); run(() => void engine.pasteLayer()); }
-        else if (key === "d" && single) { event.preventDefault(); run(() => void engine.duplicateSelected()); }
+        if (["c", "v", "d"].includes(key)) {
+          event.preventDefault();
+          if (event.repeat || event.nativeEvent.isComposing) return;
+          if (key === "c") run(() => engine.copySelected());
+          else if (key === "v" && view.canPasteLayer) run(() => void engine.pasteLayer());
+          else if (key === "d") run(() => void engine.duplicateSelected());
+        }
       } else if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); run(() => engine.deleteSelected()); }
     }}>
-    {action("复制", Copy, () => engine.copySelected(), "Ctrl+C", !single)}
+    {action(single ? "复制" : `复制所选 ${position.ids.length} 个图层`, Copy, () => engine.copySelected(), "Ctrl+C")}
     {action("粘贴", Clipboard, () => void engine.pasteLayer(), "Ctrl+V", !view.canPasteLayer)}
-    {action("创建副本", CopyPlus, () => void engine.duplicateSelected(), "Ctrl+D", !single)}
+    {action(single ? "创建副本" : `创建所选 ${position.ids.length} 个图层副本`, CopyPlus, () => void engine.duplicateSelected(), "Ctrl+D")}
     <div role="separator" />
     <button ref={orderButton} type="button" role="menuitem" tabIndex={-1} aria-label="调整层级" aria-haspopup="menu" aria-expanded={orderOpen}
       disabled={!single || (!canUp && !canDown)} onMouseEnter={() => { if (single && (canUp || canDown)) openOrder(); }} onClick={() => openOrder(true)}>

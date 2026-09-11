@@ -62,7 +62,10 @@ try {
   check(!host.querySelector(".eraser-notice"), "仅有底图时进入调色不增加范围提示");
   button("消除笔").click(); await paint();
   check(!host.querySelector(".eraser-notice"), "仅有底图时进入消除笔不增加范围提示");
-  button("绘制").click(); await paint(); button("矩形").click(); await paint();
+  canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
+  check(button("画笔").getAttribute("aria-pressed") === "true" && button("绘制").getAttribute("aria-keyshortcuts") === "D" &&
+    button("绘制").textContent === "绘制" && button("绘制").title.includes("沿用当前绘制类型"), "D默认进入画笔，按钮只显示绘制，悬停及无障碍信息提供快捷键提示");
+  button("矩形").click(); await paint();
   check(settings().textContent!.includes("新矩形样式") && settings().textContent!.includes("拖动绘制矩形") && !host.querySelector(".notice-bar"), "新绘制有明确样式范围和拖动提示，画布不再常驻重复提示条");
   await range("不透明度滑块", [40, 65]);
   check(button("撤销").disabled && host.querySelector<HTMLButtonElement>('.top-right .primary-button')!.disabled && settings().textContent!.includes("不能完全遮盖"), "设置新图形不透明度不产生历史，显示透出下方内容的提示");
@@ -98,6 +101,15 @@ try {
   check(button("平移").getAttribute("aria-pressed") === "true" && hidden(), "H 切到平移并保留属性栏收起状态");
   canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true, cancelable: true })); await paint();
   check(hidden() && zoom() === keyView && host.querySelector(".layer-card.selected")?.getAttribute("data-layer-id") === rectId, "V 返回选择，保留对象、缩放和收起状态");
+  button("收起图层").click(); await paint();
+  canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
+  check(!hidden() && settings().textContent!.includes("新矩形样式") && !host.querySelector(".layer-card.selected") && content().length === 1,
+    "D与点击绘制一致，展开属性并退出对象选择，不生成新图层");
+  check(zoom() === keyView && getComputedStyle(host.querySelector(".layers-panel")!).display === "none", "D展开属性保持缩放，右侧图层面板仍收起");
+  button("收起工具属性").click(); await paint();
+  canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
+  check(!hidden() && button("矩形").getAttribute("aria-pressed") === "true" && content().length === 1, "已在绘制时再次按D仍可展开属性，不退出或切换类型");
+  button("展开图层").click(); await paint();
   await select(rect);
   check(settings().textContent!.includes("当前矩形属性") && button("绘制").getAttribute("aria-pressed") === "true" && button("选择").getAttribute("aria-pressed") === "true", "通过图层选中矩形后显示当前属性，绘制与选择正确高亮");
   check(button("实心").getAttribute("aria-pressed") === "true" && !!button("填充颜色 #ffffff") && !button("线条类型"), "实心图形只显示填充颜色，不展示无效边框设置");
@@ -112,6 +124,8 @@ try {
   check(host.querySelector<HTMLInputElement>('input[aria-label="矩形圆角滑块"]')!.value === "24", "重做圆角恢复数值和滑块位置");
   await number("矩形圆角", "0", "Enter");
   button("边框").click(); await paint(); button("线条类型").click(); await paint();
+  document.querySelector(".shape-line-menu")!.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
+  check(!!document.querySelector(".shape-line-menu") && !!host.querySelector(".layer-card.selected"), "线型菜单中的D不进入绘制或清空选择");
   const menu = document.querySelector<HTMLElement>('.shape-line-menu')!;
   check(menu.querySelectorAll('[role=option]').length === 5 && document.activeElement === menu, "线型下拉展示五个带示意图的选项，打开后接收键盘操作");
   menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await paint();
@@ -240,9 +254,11 @@ try {
   check(!host.querySelector(".eraser-notice"), "普通操作反馈会自动收起");
   button("操作帮助").click(); await paint();
   const help = host.querySelector<HTMLDialogElement>(".shortcut-help-dialog")!;
-  check(help.textContent!.includes("选择 / 平移") && help.textContent!.includes("V／H"), "操作帮助展示选择／平移快捷键及输入隔离说明");
+  check(help.textContent!.includes("绘制 / 选择 / 平移") && help.textContent!.includes("D／V／H") && help.querySelectorAll(".shortcut-list > div").length === 24,
+    "操作帮助同一行展示D／V／H及输入隔离说明，不增加行数");
   const modeBeforeHelp = button("平移").getAttribute("aria-pressed");
   help.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true, cancelable: true })); await paint();
+  help.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
   check(button("平移").getAttribute("aria-pressed") === modeBeforeHelp && help.open, "帮助弹窗中的 H 不切换背景模式");
   button("关闭操作帮助").click(); await paint();
   host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click(); await settle(() => !!host.querySelector(".confirmation-dialog[open]"));

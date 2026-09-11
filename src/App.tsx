@@ -137,11 +137,11 @@ export default function App({ integration, preview = false }: { integration?: Ed
     if (canvasInteracting || locked || view.unfinishedSelection) return;
     if (settingsRequest.current === view.propertiesRequest) return;
     settingsRequest.current = view.propertiesRequest;
-    if (view.selectionCount && !settingsOpen) {
+    if ((view.selectionCount || ["draw", "rect", "circle"].includes(view.tool)) && !settingsOpen) {
       engine?.zoomTo(view.zoom);
       setSettingsOpen(true);
     }
-  }, [view.propertiesRequest, view.selectionCount, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
+  }, [view.propertiesRequest, view.selectionCount, view.tool, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
   const settingsTitle = view.selectionCount > 1 ? `已选 ${view.selectionCount} 个图层` : panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
   const locateProblem = view.problemObjectId && view.layers.some(layer => layer.id === view.problemObjectId) ? () => {
     const ids = (view.problemObjectIds ?? [view.problemObjectId!]).filter(id => view.layers.some(layer => layer.id === id));
@@ -174,7 +174,9 @@ export default function App({ integration, preview = false }: { integration?: Ed
     </header>
     <main className={`workspace${layersOpen ? "" : " layers-collapsed"}${settingsOpen ? "" : " settings-collapsed"}`}>
       <nav className="tool-rail" aria-label="编辑工具">
-        {TOOLS.map(({ id, label, icon: Icon }) => <button key={id} className={`tool-button ${view.workspace === id ? "active" : ""}`} disabled={locked} aria-label={label} aria-controls="tool-settings" aria-pressed={view.workspace === id} onClick={() => { changeSettings(true); id === "draw" ? engine?.activateDrawing() : engine?.setTool(id); }}><Icon size={21} /><span>{label}</span></button>)}
+        {TOOLS.map(({ id, label, icon: Icon }) => <button key={id} className={`tool-button ${view.workspace === id ? "active" : ""}`} disabled={locked} aria-label={label} aria-controls="tool-settings" aria-pressed={view.workspace === id}
+          aria-keyshortcuts={id === "draw" ? "D" : undefined} title={id === "draw" ? "进入或继续绘制（D），沿用当前绘制类型" : undefined}
+          onClick={() => { changeSettings(true); id === "draw" ? engine?.activateDrawing() : engine?.setTool(id); }}><Icon size={21} /><span>{label}</span></button>)}
         <div className="tool-help"><ActionButton floating hintPlacement="right" hintDelay={300} hintSuspended={helpOpen} dismissHintOnClick className="tool-button" aria-label="操作帮助" hint="操作说明与快捷键" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => setHelpOpen(true)}><CircleHelp size={21} /><span>帮助</span></ActionButton></div>
       </nav>
       <aside id="tool-settings" className="settings-panel" hidden={!settingsOpen} aria-label="工具属性">
