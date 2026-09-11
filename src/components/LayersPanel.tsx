@@ -51,6 +51,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate, co
   const movable = view.selectionCount === 1 && index >= 0 && content[index].visible && !content[index].locked;
   const canUp = movable && index > 0, canDown = movable && index < content.length - 1;
   const deleteLabel = view.selectionCount > 1 ? `删除所选 ${view.selectionCount} 个图层` : "删除图层";
+  const copyLabel = view.selectionCount > 1 ? `复制所选 ${view.selectionCount} 个图层` : "复制图层";
   const baseOnly = view.tool === "erase" && !view.compareOriginal && content.length > 0;
   return <aside id="layers-panel" className="layers-panel" hidden={hidden} aria-label="图层">
     <div className="layers-heading"><span><Layers3 size={18} />图层</span><strong aria-label={`共 ${view.layers.length} 个图层`}>{view.layers.length}</strong></div>
@@ -63,7 +64,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate, co
         const reason = base ? "底图固定，不可选择" : !layer.visible && layer.locked ? "显示并解锁后可编辑" : !layer.visible ? "显示后可编辑" : layer.locked ? "解锁后可编辑" : undefined;
         const showProblemDetails = problem && problemInspection?.id === layer.id && problemInspection.selectionKey === selectionKey && !layer.selected;
         return <div key={layer.id} tabIndex={-1} onContextMenu={event => contextMenu?.(event, layer.id)} aria-label={`图层 ${layer.name}${status ? `，${status}` : ""}`} className={`layer-card${layer.selected ? " selected" : ""}${problem ? " has-problem" : ""}${!layer.visible ? " is-hidden" : ""}${showProblemDetails ? " inspecting-problem" : ""}`} data-purpose={layer.purpose} data-layer-id={layer.id}>
-          <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? layer.name} onClick={() => { setProblemInspection(undefined); engine?.selectLayer(layer.id); }} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
+          <button className="layer-select" disabled={disabled || base || layer.locked || !layer.visible} title={reason ?? `${layer.name}；Shift／Ctrl＋点击增减选择（Mac 可用 Command）`} onClick={event => { setProblemInspection(undefined); engine?.selectLayer(layer.id, !event.altKey && (event.shiftKey || event.ctrlKey || event.metaKey)); }} aria-label={`选择图层 ${layer.name}`} aria-pressed={layer.selected}>
             <span className={`layer-thumb role-${layer.role}`}>
               {layer.thumbnailUrl ? <img src={layer.thumbnailUrl} alt="" /> : <Icon aria-hidden="true" />}
               {!base && layer.color && <span className="layer-color" style={{ backgroundColor: layer.color }} aria-label={`颜色 ${layer.color}`} />}
@@ -96,7 +97,7 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate, co
         <ActionButton floating hint={movable && !canUp ? "已在最上层" : "上移一层 Ctrl+↑"} aria-label="上移一层" aria-keyshortcuts="Control+ArrowUp Meta+ArrowUp" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "up")}><ArrowUp /></ActionButton>
         <ActionButton floating hint={movable && !canDown ? "已在最下层" : "下移一层 Ctrl+↓"} aria-label="下移一层" aria-keyshortcuts="Control+ArrowDown Meta+ArrowDown" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "down")}><ArrowDown /></ActionButton>
         <ActionButton floating hint={movable && !canDown ? "已在最下层" : "置底 Ctrl+Shift+↓，仍在底图上方"} aria-label="置底" aria-keyshortcuts="Control+Shift+ArrowDown Meta+Shift+ArrowDown" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "bottom")}><ArrowDownToLine /></ActionButton>
-        <ActionButton floating className="layer-copy" hint="复制图层 Ctrl+D" aria-label="复制图层" disabled={disabled || view.selectionCount !== 1} onClick={() => void engine?.duplicateSelected()}><Copy /></ActionButton>
+        <ActionButton floating className="layer-copy" hint={`${copyLabel} Ctrl+D`} aria-label={copyLabel} disabled={disabled || !view.selectionCount || view.tool === "pan"} onClick={() => void engine?.duplicateSelected()}><Copy /></ActionButton>
         <ActionButton floating hint={`${deleteLabel}，可撤销`} aria-label={deleteLabel} disabled={disabled || !view.selectionCount} onClick={() => engine?.deleteSelected()}><Trash2 /></ActionButton>
       </div>
     </div>

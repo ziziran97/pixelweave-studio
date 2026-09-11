@@ -2,6 +2,7 @@ import { ActiveSelection, Point, Textbox } from "fabric";
 import { prepareUploadedImage, toBlob } from "../src/editor/assets";
 import { createEditor, picture, pixelAt } from "./editing-tools";
 import { textProperties } from "../src/editor/text";
+import { checkMultiLayerCopy } from "./multi-layer-copy";
 
 export async function checkProductivity(check: (ok: boolean, message: string) => void) {
   const source = document.createElement("canvas"); source.width = 80; source.height = 60;
@@ -73,7 +74,9 @@ export async function checkProductivity(check: (ok: boolean, message: string) =>
     const both = [firstId, secondId].map(id => editor.canvas.getObjects().find(item => item.editorId === id)!);
     editor.canvas.setActiveObject(new ActiveSelection(both, { canvas: editor.canvas }));
     const multiCount = state().layers.length; editor.copySelected(); await editor.duplicateSelected();
-    check(state().selectionCount === 2 && state().layers.length === multiCount, "多选不误复制其中一层，也不拆开已有多选");
+    check(state().selectionCount === 2 && state().layers.length === multiCount + 2, "多选创建完整批次副本，并保持副本整批选中");
+    await editor.undo();
+    editor.selectLayer(firstId); editor.selectLayer(secondId, true);
     check(editor.contextSelectionAt(undefined, firstId)?.length === 2 && !editor.contextSelectionAt(undefined, pasteId),
       "右键当前多选成员保留整组选中，右键未选图层不切换目标");
     editor.setTool("pan"); check(!editor.contextSelectionAt(), "平移期间不打开图层菜单");
@@ -175,6 +178,7 @@ export async function checkProductivity(check: (ok: boolean, message: string) =>
   } finally { test.dispose(); }
   await checkContextMenuAnchors(check);
   await checkClickMultiSelection(check);
+  await checkMultiLayerCopy(check);
 }
 
 async function checkClickMultiSelection(check: (ok: boolean, message: string) => void) {

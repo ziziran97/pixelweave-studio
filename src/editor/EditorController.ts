@@ -87,7 +87,7 @@ export class EditorController {
   private changingSelection = false;
   private propertyEdit = false;
   private numberEdit?: NumberEdit;
-  private clipboard?: { data: ObjectData; offset: number };
+  private clipboard?: { data: ObjectData[]; offset: number };
   private clipboardFocus = false;
   private nudgeKeys = new Set<string>();
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
@@ -304,7 +304,7 @@ export class EditorController {
         color: object.editorColor ?? (typeof (object instanceof Textbox ? object.fill : object.stroke) === "string" ? String(object instanceof Textbox ? object.fill : object.stroke) : undefined),
         thumbnailUrl: object.editorPurpose === "base" && object.editorAssetId ? this.assets.get(object.editorAssetId).url : undefined })).reverse(),
       selectionCount: selected.length, selectedId: single?.editorId, selectedPurpose: single?.editorPurpose,
-      canPasteLayer: !!this.clipboard && !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft,
+      canPasteLayer: !!this.clipboard && !this.locked && !this.gestureActive && !this.selection.draft && !this.shapeDraft && !this.space && !this.preparingColorPick && this.tool !== "pan",
       canCenterSelection: selected.length === 1 && !!this.positionTarget(),
       text: single instanceof Textbox ? textProperties(single) : this.workspace === "text" && !selected.length ? { ...this.textDefaults } : undefined,
       textEditing: single instanceof Textbox && single.isEditing,
@@ -1259,13 +1259,25 @@ export class EditorController {
     this.emit();
   }
 
-  selectLayer(id: string) {
-    if (this.locked) return;
+  selectLayer(id: string, additive = false) {
+    if (this.locked || (additive && (this.gestureActive || this.space || this.selection.draft || this.shapeDraft || this.preparingColorPick))) return;
     const object = this.canvas.getObjects().find(item => item.editorId === id);
     if (!object || object.editorPurpose === "base" || object.editorLocked || !object.visible) return;
     this.finishPropertyEdit(); this.finishText();
     if (!this.canvas.getObjects().includes(object)) return;
-    this.cancelDraft(); this.tool = "select"; this.configure(); this.canvas.setActiveObject(object); this.selectionChanged();
+    this.cancelDraft(); this.tool = "select";
+    if (!additive) { this.configure(); this.canvas.setActiveObject(object); this.selectionChanged(); return; }
+    const selected = this.canvas.getActiveObjects();
+    const members = selected.includes(object) ? selected.filter(item => item !== object) : [...selected, object];
+    const ordered = this.canvas.getObjects().filter(item => members.includes(item));
+    this.changingSelection = ordered.length !== 1;
+    try {
+      // Release group transforms before rebuilding membership; selection never moves a layer.
+      this.canvas.discardActiveObject(); this.configure();
+      if (ordered.length) this.canvas.setActiveObject(ordered.length === 1 ? ordered[0] : new ActiveSelection(ordered, { canvas: this.canvas }));
+      this.selectionChanged();
+    } finally { this.changingSelection = false; }
+    this.canvas.requestRenderAll();
   }
   private positionTarget() {
     if (this.locked || this.gestureActive || this.space || this.selection.draft || this.shapeDraft ||
@@ -1359,6 +1371,14 @@ export class EditorController {
     const selected = this.canvas.getActiveObjects();
     return selected.length === 1 && selected[0].editorPurpose === "content" && selected[0].visible && !selected[0].editorLocked ? selected[0] : undefined;
   }
+  private copyableLayers() {
+    return this.canvas.getActiveObjects().filter(object => object.editorPurpose === "content" && object.visible && !object.editorLocked);
+  }
+  private copyData() {
+    const ids = new Set(this.copyableLayers().map(object => object.editorId));
+    // Canvas serialization resolves ActiveSelection transforms and preserves stacking order.
+    return deepCopy(this.snapshot().objects.filter(object => ids.has(object.editorId)));
+  }
   contextSelectionAt(event?: MouseEvent, layerId?: string) {
     if (!this.positionTarget() || (this.canvas.getActiveObject() instanceof Textbox && (this.canvas.getActiveObject() as Textbox).isEditing)) return;
     const selected = this.canvas.getActiveObjects();
@@ -1385,39 +1405,58 @@ export class EditorController {
     return { x: bounds.left + x * bounds.width / this.canvas.width, y: bounds.top + y * bounds.height / this.canvas.height };
   }
   copySelected() {
-    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.space || this.preparingColorPick || this.tool === "pan") return;
     this.finishPropertyEdit(); this.finishText();
-    const object = this.copyableLayer(); if (!object) return;
-    this.clipboard = { data: deepCopy(object.toObject(SERIALIZED_PROPS)) as ObjectData, offset: 0 };
-    this.notice = "已复制图层，可用 Ctrl+V 粘贴"; this.emit();
+    const data = this.copyData(); if (!data.length) return;
+    this.clipboard = { data, offset: 0 };
+    this.notice = data.length > 1 ? `已复制 ${data.length} 个图层，可用 Ctrl+V 粘贴` : "已复制图层，可用 Ctrl+V 粘贴"; this.emit();
   }
   async pasteLayer() {
-    if (!this.clipboard || this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    if (!this.clipboard || this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.space || this.preparingColorPick || this.tool === "pan") return;
     this.finishPropertyEdit(); this.finishText();
     const clipboard = this.clipboard;
     if (await this.insertLayerCopy(clipboard.data, clipboard.offset + 20) && this.clipboard === clipboard) clipboard.offset += 20;
   }
   async duplicateSelected() {
-    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
+    if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft || this.space || this.preparingColorPick || this.tool === "pan") return;
     this.finishPropertyEdit(); this.finishText();
-    const object = this.copyableLayer(); if (!object) return;
-    await this.insertLayerCopy(object.toObject(SERIALIZED_PROPS) as ObjectData, 20);
+    const data = this.copyData(); if (!data.length) return;
+    await this.insertLayerCopy(data, 20);
   }
-  private async insertLayerCopy(data: ObjectData, offset: number) {
+  private async insertLayerCopy(data: ObjectData[], offset: number) {
     this.busy = true; this.configure(); this.emit(); const token = this.generation;
+    let objects: FabricObject[] = [], inserted = false, changedSelection = false;
+    const previous = this.canvas.getActiveObjects(), previousTool = this.tool, previousNames = { ...this.nameCounts };
     try {
-      await ensureObjectFonts([data]);
-      const [object] = await util.enlivenObjects<FabricObject>([deepCopy(data)]);
-      if (this.disposed || token !== this.generation) { object.dispose(); return false; }
-      object.set({ editorId: uid("copy"), left: object.left + offset, top: object.top + offset, editorLocked: false, selectable: true, evented: true });
-      if (!(object instanceof Textbox)) object.editorName = this.nextName(object instanceof Rect ? "矩形" : object instanceof Ellipse ? "椭圆" : "画笔");
-      this.tool = "select";
-      this.canvas.add(object); this.canvas.setActiveObject(object);
+      await ensureObjectFonts(data);
+      if (this.disposed || token !== this.generation) return false;
+      objects = await util.enlivenObjects<FabricObject>(deepCopy(data));
+      if (this.disposed || token !== this.generation) return false;
+      if (objects.length !== data.length) throw new Error("部分图层复制失败，未创建副本，请重试");
+      objects.forEach(object => {
+        object.set({ editorId: uid("copy"), left: object.left + offset, top: object.top + offset, editorLocked: false, selectable: true, evented: true });
+        if (!(object instanceof Textbox)) object.editorName = this.nextName(object instanceof Rect ? "矩形" : object instanceof Ellipse ? "椭圆" : "画笔");
+      });
+      // Prepare the whole batch first so failed font/object loading leaves the draft intact.
+      changedSelection = true; this.canvas.discardActiveObject(); this.tool = "select";
+      this.canvas.add(...objects);
+      this.canvas.setActiveObject(objects.length === 1 ? objects[0] : new ActiveSelection(objects, { canvas: this.canvas }));
       this.syncSelectionWorkspace();
-      this.notice = "已创建图层副本，可继续编辑";
+      this.notice = objects.length > 1 ? `已创建 ${objects.length} 个图层副本，可整体移动或单独编辑` : "已创建图层副本，可继续编辑";
+      inserted = true;
       return true;
-    } catch (error) { this.report(error); }
-    finally { if (!this.disposed) { this.busy = false; this.configure(); this.commit(); } }
+    } catch (error) {
+      if (!this.disposed && token === this.generation) {
+        if (changedSelection) {
+          this.canvas.discardActiveObject(); this.canvas.remove(...objects); this.tool = previousTool; this.nameCounts = previousNames;
+          if (previous.length) this.canvas.setActiveObject(previous.length === 1 ? previous[0] : new ActiveSelection(previous, { canvas: this.canvas }));
+        }
+        this.report(error);
+      }
+    } finally {
+      if (!inserted) objects.forEach(object => object.dispose());
+      if (!this.disposed && token === this.generation) { this.busy = false; this.configure(); if (inserted) this.commit(); else this.emit(); }
+    }
     return false;
   }
   private initialTextSize() { return Math.max(8, Math.min(500, Math.round(Math.min(this.size.width, this.size.height) * .05))); }
@@ -1847,7 +1886,7 @@ export class EditorController {
   }
   private switchModeByKey(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
-    if ((key !== "v" && key !== "h") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return false;
+    if ((key !== "v" && key !== "h" && key !== "d") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return false;
     const target = event.target instanceof Element ? event.target : undefined;
     const root = this.viewport.closest(".app-shell") ?? this.viewport;
     const inEditor = !!target && (root.contains(target) ||
@@ -1860,7 +1899,12 @@ export class EditorController {
       this.space || this.maskHidden || this.gestureActive || this.selection.draft || this.shapeDraft || this.preparingColorPick ||
       this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
     event.preventDefault(); event.stopPropagation();
-    this.setTool(key === "v" ? "select" : "pan");
+    if (key === "d") {
+      const alreadyDrawing = this.tool === this.lastDrawingTool;
+      this.propertiesRequest++;
+      this.activateDrawing();
+      if (alreadyDrawing) this.emit();
+    } else this.setTool(key === "v" ? "select" : "pan");
     return true;
   }
   private keyDown = (event: KeyboardEvent) => {
@@ -1893,10 +1937,10 @@ export class EditorController {
     const ownsClipboard = !!target && (this.viewport.contains(target) || !!this.viewport.closest(".app-shell")?.contains(target) ||
       (target === document.body && this.clipboardFocus));
     if (command && !event.altKey && !event.shiftKey && ownsClipboard) {
-      if (event.key.toLowerCase() === "c" && this.copyableLayer()) { event.preventDefault(); this.copySelected(); }
-      if (event.key.toLowerCase() === "v" && this.clipboard) { event.preventDefault(); void this.pasteLayer(); }
+      if (event.key.toLowerCase() === "c" && this.copyableLayers().length) { event.preventDefault(); if (!event.repeat) this.copySelected(); }
+      if (event.key.toLowerCase() === "v" && this.clipboard) { event.preventDefault(); if (!event.repeat) void this.pasteLayer(); }
+      if (event.key.toLowerCase() === "d") { event.preventDefault(); if (!event.repeat) void this.duplicateSelected(); }
     }
-    if (command && event.key.toLowerCase() === "d") { event.preventDefault(); void this.duplicateSelected(); }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       if (this.selection.mode === "lasso" && this.selection.draft) this.undoLassoPoint(); else this.deleteSelected();

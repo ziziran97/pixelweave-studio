@@ -49,8 +49,31 @@ try {
   check(!button("上移一层").disabled && button("下移一层").disabled && editor.canvas.getObjects()[0].editorPurpose === "base", "移动后按钮边界更新，底图保持最下层");
   editor.setTool("rect"); test.drag(200, 100, 270, 150);
   const c = editor.canvas.getObjects().at(-1)!;
+  editor.selectLayer(a.editorId!); await render();
+  const pick = async (id: string, extra: MouseEventInit = {}) => {
+    host.querySelector<HTMLButtonElement>(`[data-layer-id='${id}'] .layer-select`)!.dispatchEvent(new MouseEvent("click", { bubbles: true, ...extra })); await render();
+  };
+  const selectionHistory = (editor as unknown as { history: { index: number } }).history.index;
+  const selectionOrder = editor.canvas.getObjects().map(object => object.editorId).join();
+  const listPositions = [a, b, c].map(object => object.getCenterPoint());
+  const propertiesRequest = state().propertiesRequest, workspace = state().workspace;
+  await pick(c.editorId!, { shiftKey: true });
+  check(state().selectionCount === 2 && !editor.canvas.getActiveObjects().includes(b) && state().propertiesRequest === propertiesRequest && state().workspace === workspace,
+    "图层列表Shift点击只增减点击层，不连续选择中间层或改变工作区和面板展开请求");
+  await pick(b.editorId!, { ctrlKey: true });
+  check(state().selectionCount === 3 && host.querySelectorAll('.layer-select[aria-pressed="true"]').length === 3, "列表Ctrl点击追加选择并同步三行高亮");
+  await pick(a.editorId!, { metaKey: true });
+  check(state().selectionCount === 2 && !editor.canvas.getActiveObjects().includes(a), "列表Command点击已选层只移除该层");
+  await pick(b.editorId!, { shiftKey: true });
+  check(state().selectedId === c.editorId && !!state().shape && state().workspace === "draw", "列表多选减少到单选时恢复当前对象属性");
+  await pick(c.editorId!, { ctrlKey: true });
+  check(!state().selectionCount && state().workspace === "draw", "列表可用Ctrl点击取消最后一个选择，保留工作区");
+  await pick(a.editorId!, { metaKey: true }); await pick(c.editorId!, { ctrlKey: true }); await pick(b.editorId!);
+  check(state().selectedId === b.editorId && (editor as unknown as { history: { index: number } }).history.index === selectionHistory &&
+    editor.canvas.getObjects().map(object => object.editorId).join() === selectionOrder && [a, b, c].every((object, i) => object.getCenterPoint().distanceFrom(listPositions[i]) < .001),
+    "普通点击恢复单选，列表增减全过程不改变对象位置、顺序或历史");
   editor.setTool("select"); editor.canvas.setActiveObject(new ActiveSelection([a, b, c], { canvas: editor.canvas })); await render();
-  check(!!button("删除所选 3 个图层") && host.textContent!.includes("已选 3 个图层") && button("复制图层").disabled, "多选显示数量，删除明确作用范围");
+  check(!!button("删除所选 3 个图层") && host.textContent!.includes("已选 3 个图层") && !button("复制所选 3 个图层").disabled, "多选显示数量，复制和删除明确作用范围");
   check(["置顶", "上移一层", "下移一层", "置底"].every(label => button(label).disabled), "多选时四个排序按钮均禁用");
   const positions = [a, b, c].map(item => item.getCenterPoint());
   editor.updateLayer(b.editorId!, { locked: true });

@@ -17,10 +17,10 @@ export function ShortcutHelp({ close }: { close: () => void }) {
             <div><dt>重做</dt><dd><kbd>Ctrl+Shift+Z</kbd> / <kbd>Ctrl+Y</kbd></dd></div>
             <div><dt>删除图层</dt><dd><kbd>Delete</kbd> / <kbd>Backspace</kbd></dd></div>
             <div><dt>创建图层副本</dt><dd><kbd>Ctrl+D</kbd></dd></div>
-            <div><dt>复制 / 粘贴单图层</dt><dd><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></dd></div>
+            <div><dt>复制 / 粘贴图层</dt><dd><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></dd></div>
             <div><dt>图层快捷菜单</dt><dd>选中后右键 / <kbd>Ctrl+Shift+X</kbd></dd></div>
-            <div><dt>选择 / 平移</dt><dd><kbd>V</kbd> / <kbd>H</kbd></dd></div>
-            <div><dt>多选画布对象</dt><dd>框选 / <kbd>Shift</kbd> 或 <kbd>Ctrl</kbd>＋点击增减</dd></div>
+            <div><dt>绘制 / 选择 / 平移</dt><dd><kbd>D</kbd> / <kbd>V</kbd> / <kbd>H</kbd></dd></div>
+            <div><dt>多选图层</dt><dd>画布框选 / <kbd>Shift</kbd> 或 <kbd>Ctrl</kbd>＋点击</dd></div>
             <div><dt>全选可编辑图层</dt><dd>选择时 <kbd>Ctrl+A</kbd></dd></div>
             <div><dt>上移 / 下移一层</dt><dd>单选时 <kbd>Ctrl+↑</kbd> / <kbd>Ctrl+↓</kbd></dd></div>
             <div><dt>置顶 / 置底</dt><dd>单选时 <kbd>Ctrl+Shift+↑</kbd> / <kbd>Ctrl+Shift+↓</kbd></dd></div>
@@ -46,8 +46,8 @@ export function ShortcutHelp({ close }: { close: () => void }) {
         </section>
       </div>
       <div className="shortcut-help-notes">
-        <p className="field-help">输入文字、数值或操作菜单时，按键用于当前区域，V／H 不切换模式。</p>
-        <p className="field-help">Mac：可用 ⌘ Command 代替 Ctrl。</p>
+        <p className="field-help">输入文字、数值或操作菜单时，按键用于当前区域，D／V／H 不切换工具。</p>
+        <p className="field-help">画布和图层列表均可按住 Shift／Ctrl 点击增减选择；复制支持多选。Mac 可用 ⌘ Command 代替 Ctrl。</p>
       </div>
     </div>
   </dialog>;

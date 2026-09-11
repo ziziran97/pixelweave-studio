@@ -167,6 +167,19 @@ try {
     getComputedStyle(host.querySelector(".settings-panel")!).display === "none" && getComputedStyle(host.querySelector(".layers-panel")!).display === "none" &&
     host.querySelector('[aria-label="当前缩放比例"]')!.textContent === allZoom, "Ctrl+A全选保持两个面板收起及原缩放");
   check(["置顶", "上移一层", "下移一层", "置底"].every(label => button(label).disabled), "全选形成多选后禁用四个排序按钮");
+  await menuKey(viewport);
+  check(!command(`复制所选 ${selectableCount} 个图层`).disabled && !command(`创建所选 ${selectableCount} 个图层副本`).disabled &&
+    command("调整层级").disabled && command("隐藏图层").disabled && command("锁定图层").disabled, "多选菜单开放整批复制与创建副本，排序显隐锁定保持原范围");
+  command(`复制所选 ${selectableCount} 个图层`).click(); await paint();
+  await menuKey(viewport); const batchCount = layerIds().length;
+  command("粘贴").click(); await settle(() => layerIds().length === batchCount + selectableCount); await ready();
+  check(host.querySelectorAll(".layer-card.selected").length === selectableCount && getComputedStyle(host.querySelector(".settings-panel")!).display === "none" &&
+    getComputedStyle(host.querySelector(".layers-panel")!).display === "none", "菜单粘贴整批选中新副本并保留两个面板收起状态");
+  button("撤销").click(); await ready(); check(layerIds().length === batchCount, "菜单整批粘贴一步撤销");
+  await layerKey("a"); await menuKey(viewport);
+  await layerKey("d", {}, document.activeElement as HTMLElement); await settle(() => layerIds().length === batchCount + selectableCount); await ready();
+  check(!menu() && host.querySelectorAll(".layer-card.selected").length === selectableCount, "多选菜单Ctrl+D创建完整批次并关闭菜单");
+  button("撤销").click(); await ready();
   button("展开图层").click(); await paint();
   host.querySelector<HTMLButtonElement>(`[data-layer-id="${oldId}"] .layer-select`)!.click(); await paint();
   button("操作帮助").click(); await paint();
