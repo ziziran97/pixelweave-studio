@@ -8,16 +8,47 @@ export function ShortcutHelp({ close }: { close: () => void }) {
   return <dialog ref={dialog} className="shortcut-help-dialog" aria-labelledby="shortcut-help-title"
     onCancel={event => { event.preventDefault(); dismiss(); }} onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
     <div className="confirmation-heading"><h2 id="shortcut-help-title">操作帮助</h2><button className="icon-button" aria-label="关闭操作帮助" onClick={dismiss}><X size={18} /></button></div>
-    <dl className="shortcut-list">
-      <div><dt>撤销 / 重做</dt><dd><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Shift+Z</kbd></dd></div>
-      <div><dt>删除 / 复制图层</dt><dd><kbd>Delete</kbd> / <kbd>Ctrl+D</kbd></dd></div>
-      <div><dt>复制 / 粘贴图层</dt><dd><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></dd></div>
-      <div><dt>图层快捷菜单</dt><dd>选中后右键 / <kbd>Shift+F10</kbd></dd></div>
-      <div><dt>缩放图片</dt><dd>滚动鼠标滚轮</dd></div>
-      <div><dt>临时平移画布</dt><dd>按住空格拖动</dd></div>
-      <div><dt>微调所选图层</dt><dd>方向键移动 1 px；<kbd>Shift</kbd>＋方向键移动 10 px</dd></div>
-      <div><dt>编辑文字 / 换行</dt><dd>双击文字 / <kbd>Enter</kbd></dd></div>
-    </dl>
-    <p className="field-help">微调按图片像素移动，多选时整体移动。复制／粘贴用于本次编辑内的单个新增图层。文字输入时，复制、粘贴、方向键、删除和撤销等按键用于编辑文字；操作控件时方向键用于当前控件。绘制矩形选区时，松手前按住空格移动的是选框。</p>
+    <div className="shortcut-help-content">
+      <div className="shortcut-columns">
+        <section aria-labelledby="shortcut-general-title">
+          <h3 id="shortcut-general-title">通用与图层</h3>
+          <dl className="shortcut-list">
+            <div><dt>撤销</dt><dd><kbd>Ctrl+Z</kbd></dd></div>
+            <div><dt>重做</dt><dd><kbd>Ctrl+Shift+Z</kbd> / <kbd>Ctrl+Y</kbd></dd></div>
+            <div><dt>删除图层</dt><dd><kbd>Delete</kbd> / <kbd>Backspace</kbd></dd></div>
+            <div><dt>创建图层副本</dt><dd><kbd>Ctrl+D</kbd></dd></div>
+            <div><dt>复制 / 粘贴单图层</dt><dd><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></dd></div>
+            <div><dt>图层快捷菜单</dt><dd>选中后右键 / <kbd>Ctrl+Shift+X</kbd></dd></div>
+            <div><dt>选择 / 平移</dt><dd><kbd>V</kbd> / <kbd>H</kbd></dd></div>
+            <div><dt>多选画布对象</dt><dd>框选 / <kbd>Shift</kbd> 或 <kbd>Ctrl</kbd>＋点击增减</dd></div>
+            <div><dt>全选可编辑图层</dt><dd>选择时 <kbd>Ctrl+A</kbd></dd></div>
+            <div><dt>上移 / 下移一层</dt><dd>单选时 <kbd>Ctrl+↑</kbd> / <kbd>Ctrl+↓</kbd></dd></div>
+            <div><dt>置顶 / 置底</dt><dd>单选时 <kbd>Ctrl+Shift+↑</kbd> / <kbd>Ctrl+Shift+↓</kbd></dd></div>
+            <div><dt>微调图层（图片像素）</dt><dd>方向键 1 px / <kbd>Shift</kbd>＋方向键 10 px</dd></div>
+          </dl>
+        </section>
+        <section aria-labelledby="shortcut-edit-title">
+          <h3 id="shortcut-edit-title">绘制、编辑与查看</h3>
+          <dl className="shortcut-list">
+            <div><dt>编辑文字 / 换行</dt><dd>双击文字 / <kbd>Enter</kbd></dd></div>
+            <div><dt>画笔画直线</dt><dd>绘制时按住 <kbd>Shift</kbd></dd></div>
+            <div><dt>画正方形 / 圆形</dt><dd>绘制矩形 / 椭圆时按住 <kbd>Shift</kbd></dd></div>
+            <div><dt>移动矩形选区框</dt><dd>未松手时，按住空格拖动</dd></div>
+            <div><dt>闭合套索（至少三点）</dt><dd>点击起点 / <kbd>Enter</kbd></dd></div>
+            <div><dt>套索撤销点（未闭合）</dt><dd><kbd>Backspace</kbd> / <kbd>Delete</kbd> / <kbd>Ctrl+Z</kbd></dd></div>
+            <div><dt>取消未完成绘制</dt><dd><kbd>Esc</kbd></dd></div>
+            <div><dt>数值输入</dt><dd><kbd>Enter</kbd> 保留 / <kbd>Esc</kbd> 还原本轮</dd></div>
+            <div><dt>退出图片取色</dt><dd><kbd>Esc</kbd></dd></div>
+            <div><dt>关闭编辑（画布空闲）</dt><dd><kbd>Esc</kbd>，有草稿时先确认</dd></div>
+            <div><dt>缩放图片</dt><dd>鼠标滚轮</dd></div>
+            <div><dt>临时平移画布</dt><dd>按住空格拖动</dd></div>
+          </dl>
+        </section>
+      </div>
+      <div className="shortcut-help-notes">
+        <p className="field-help">输入文字、数值或操作菜单时，按键用于当前区域，V／H 不切换模式。</p>
+        <p className="field-help">Mac：可用 ⌘ Command 代替 Ctrl。</p>
+      </div>
+    </div>
   </dialog>;
 }

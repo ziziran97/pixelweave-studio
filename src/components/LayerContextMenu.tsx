@@ -64,7 +64,12 @@ export function LayerContextMenu({ position, view, engine, close }: {
       event.stopPropagation();
       const target = event.target as HTMLElement, currentMenu = target.closest<HTMLElement>('[role="menu"]')!;
       const child = currentMenu === submenu.current;
-      if (event.key === "Escape") { event.preventDefault(); child ? closeOrder() : close(); }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+        event.preventDefault();
+        if (!event.repeat && !event.nativeEvent.isComposing && single && (event.key === "ArrowUp" ? canUp : canDown)) {
+          run(() => engine.moveLayer(position.ids[0], event.key === "ArrowUp" ? (event.shiftKey ? "top" : "up") : (event.shiftKey ? "bottom" : "down")));
+        }
+      } else if (event.key === "Escape") { event.preventDefault(); child ? closeOrder() : close(); }
       else if (event.key === "Tab") { event.preventDefault(); close(); }
       else if (event.key === "ArrowLeft" && child) { event.preventDefault(); closeOrder(); }
       else if (event.key === "ArrowRight" && target === orderButton.current && single) { event.preventDefault(); openOrder(true); }
@@ -90,13 +95,13 @@ export function LayerContextMenu({ position, view, engine, close }: {
     {action("隐藏图层", EyeOff, () => engine.updateLayer(position.ids[0], { visible: false }), undefined, !single)}
     {action("锁定图层", Lock, () => engine.updateLayer(position.ids[0], { locked: true }), undefined, !single)}
     <div role="separator" />
-    {action(single ? "删除图层" : `删除所选 ${position.ids.length} 个图层`, Trash2, () => engine.deleteSelected(), "Delete", false, true)}
+    {action(single ? "删除图层" : `删除所选 ${position.ids.length} 个图层`, Trash2, () => engine.deleteSelected(), "Delete / Backspace", false, true)}
     {orderOpen && <div ref={submenu} role="menu" aria-label="调整图层层级" className="layer-context-menu layer-order-submenu" style={orderPoint}>
       {([
-        ["top", "置顶", ArrowUpToLine, canUp], ["up", "上移一层", ArrowUp, canUp],
-        ["down", "下移一层", ArrowDown, canDown], ["bottom", "置底", ArrowDownToLine, canDown],
-      ] as const).map(([direction, label, Icon, enabled]) => <button key={direction} type="button" role="menuitem" aria-label={label} tabIndex={-1} disabled={!enabled}
-        onClick={() => run(() => engine.moveLayer(position.ids[0], direction))}><Icon size={16} /><span>{label}</span></button>)}
+        ["top", "置顶", ArrowUpToLine, canUp, "Ctrl+Shift+↑"], ["up", "上移一层", ArrowUp, canUp, "Ctrl+↑"],
+        ["down", "下移一层", ArrowDown, canDown, "Ctrl+↓"], ["bottom", "置底", ArrowDownToLine, canDown, "Ctrl+Shift+↓"],
+      ] as const).map(([direction, label, Icon, enabled, shortcut]) => <button key={direction} type="button" role="menuitem" aria-label={label} tabIndex={-1} disabled={!enabled}
+        onClick={() => run(() => engine.moveLayer(position.ids[0], direction))}><Icon size={16} /><span>{label}</span><kbd>{shortcut}</kbd></button>)}
     </div>}
   </div>, document.body);
 }

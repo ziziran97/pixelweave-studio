@@ -17,6 +17,7 @@ import { makeSurface, renderDocument } from "./render";
 import { ensureFont, ensureObjectFonts } from "./fonts";
 import { applyTextProperties, applyTextBackgroundOpacity, textProperties, DEFAULT_TEXT, isVerticalText } from "./text";
 import { textPlacement } from "./textPlacement";
+import { cornerScaleCursor } from "./selectionControls";
 import { SelectionGesture } from "./SelectionGesture";
 import { ContentTextbox } from "./ContentTextbox";
 import { ContentBrush } from "./ContentBrush";
@@ -90,6 +91,7 @@ export class EditorController {
   private clipboardFocus = false;
   private nudgeKeys = new Set<string>();
   private lastDrawingTool: "draw" | "rect" | "circle" = "draw";
+  private drawingHintShown = false;
   private operation: "add" | "subtract" = "add";
   private hasMask = false;
   private coverageVersion = -1;
@@ -146,7 +148,8 @@ export class EditorController {
       (import.meta.env.MODE === "production-test" ? "local-test" : import.meta.env.DEV ? "development" : import.meta.env.MODE === "demo" ? "demo" : "production"),
       integration?.telemetry ? event => integration.telemetry!.onEvent(event) : undefined, import.meta.env.DEV);
     this.canvas = new DrawingCanvas(element, { width: viewport.clientWidth, height: viewport.clientHeight, enableRetinaScaling: false, targetFindTolerance: 4,
-      preserveObjectStacking: true, uniformScaling: false, backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
+      preserveObjectStacking: true, selectionKey: ["shiftKey", "ctrlKey", "metaKey"], uniformScaling: false,
+      backgroundColor: "#edf0f4", selectionColor: "rgba(37,116,216,.1)", selectionBorderColor: "#2574d8" });
     this.canvas.on("selection:created", () => this.selectionChanged());
     this.canvas.on("selection:updated", () => this.selectionChanged());
     this.canvas.on("selection:cleared", () => { this.finishNudge(); this.emit(); });
@@ -197,6 +200,7 @@ export class EditorController {
     this.canvas.on("path:created", ({ path }) => {
       if (this.locked || this.tool !== "draw") { this.canvas.remove(path); return; }
       path.set({ editorId: uid("drawing"), editorName: this.nextName("画笔"), editorRole: "drawing", editorPurpose: "content", strokeUniform: true });
+      this.showDrawingHint();
       this.commit();
     });
     this.canvas.on("mouse:down", event => this.pointerDown(event));
@@ -546,6 +550,11 @@ export class EditorController {
   }
   activateDrawing(tool = this.lastDrawingTool) {
     this.setTool(tool);
+  }
+  private showDrawingHint() {
+    if (this.drawingHintShown || this.noticePresentation === "persistent") return;
+    this.drawingHintShown = true;
+    this.notice = "可继续绘制；按 V 或点击右下角「选择」，可选择并编辑已有内容。";
   }
   setTool(tool: ToolId) {
     if (this.locked || this.tool === tool) return;
@@ -1047,7 +1056,10 @@ export class EditorController {
         cornerColor: "#ffffff", cornerStrokeColor: "#287dcc", transparentCorners: false });
       // Reapply editing assistance after selection, clone and history restore.
       // Keep the existing free rotation of a multi-selection unchanged.
-      if (object?.editorPurpose === "content") object.set({ snapAngle: 90, snapThreshold: 5 });
+      if (object?.editorPurpose === "content") {
+        object.set({ snapAngle: 90, snapThreshold: 5 });
+        for (const corner of ["tl", "tr", "bl", "br"]) object.controls[corner].cursorStyleHandler = cornerScaleCursor;
+      }
     });
     const selection = editable && (this.tool === "select" || this.tool === "text");
     this.canvas.selection = selection; this.canvas.skipTargetFind = !selection;
@@ -1151,7 +1163,7 @@ export class EditorController {
       object.set({ excludeFromExport: false, selectable: true, evented: true, editorId: uid("shape"), editorRole: "shape",
         editorPurpose: "content", editorName: this.nextName(tool === "rect" ? "矩形" : "椭圆") });
       if (object instanceof Rect) syncRectRadius(object, true);
-      this.canvas.discardActiveObject(); this.configure(); this.commit(); return;
+      this.canvas.discardActiveObject(); this.configure(); this.showDrawingHint(); this.commit(); return;
     }
     if (this.selection.draft && this.selection.mode !== "lasso") {
       const valid = this.selection.valid(this.canvas.getZoom(), this.size), stroke = this.selection.take()!;
@@ -1357,6 +1369,20 @@ export class EditorController {
     }
     this.finishPropertyEdit();
     return selected.map(object => object.editorId!);
+  }
+  contextSelectionAnchor() {
+    const object = this.positionTarget();
+    if (!object || (object instanceof Textbox && object.isEditing)) return;
+    const bounds = this.canvas.upperCanvasEl.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const points = object.getCoords().map(point => point.transform(this.canvas.viewportTransform));
+    // Use the visible part of the selection, including zoom, pan, rotation and multiple objects.
+    // A selection outside the view anchors to the closest canvas edge without moving the image.
+    const clampX = (x: number) => Math.max(0, Math.min(this.canvas.width, x));
+    const clampY = (y: number) => Math.max(0, Math.min(this.canvas.height, y));
+    const x = (clampX(Math.min(...points.map(point => point.x))) + clampX(Math.max(...points.map(point => point.x)))) / 2;
+    const y = (clampY(Math.min(...points.map(point => point.y))) + clampY(Math.max(...points.map(point => point.y)))) / 2;
+    return { x: bounds.left + x * bounds.width / this.canvas.width, y: bounds.top + y * bounds.height / this.canvas.height };
   }
   copySelected() {
     if (this.locked || this.gestureActive || this.selection.draft || this.shapeDraft) return;
@@ -1786,15 +1812,68 @@ export class EditorController {
     }
   }
   private isInput(target: EventTarget | null) { return target instanceof HTMLElement && !!target.closest("input,textarea,select,[contenteditable='true']"); }
+  private layerShortcut(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+    const selectAll = event.key.toLowerCase() === "a" && !event.shiftKey;
+    const order = event.key === "ArrowUp" || event.key === "ArrowDown";
+    if (!selectAll && !order) return false;
+    const target = event.target instanceof Element ? event.target : undefined;
+    const root = this.viewport.closest(".app-shell") ?? this.viewport;
+    const inEditor = !!target && (root.contains(target) || (target === document.body && this.clipboardFocus));
+    const control = target?.closest("input,textarea,select,[contenteditable],dialog,[role='dialog'],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']");
+    const ownsKeys = control && control !== root && root.contains(control);
+    const blockedByDialog = [...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")].some(dialog => !dialog.contains(root));
+    if (!inEditor || ownsKeys || blockedByDialog || this.locked || this.space || this.maskHidden || this.gestureActive ||
+      this.selection.draft || this.shapeDraft || this.preparingColorPick || (this.tool !== "select" && this.tool !== "text") ||
+      this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
+    event.preventDefault(); event.stopPropagation();
+    if (event.repeat) return true;
+    this.finishNudge(); this.finishPropertyEdit();
+    if (selectAll) {
+      const objects = this.canvas.getObjects().filter(object => object.editorPurpose === "content" && object.visible && !object.editorLocked);
+      const selected = this.canvas.getActiveObjects();
+      if (objects.length === selected.length && objects.every(object => selected.includes(object))) return true;
+      this.changingSelection = true;
+      try {
+        this.canvas.discardActiveObject();
+        if (objects.length) this.canvas.setActiveObject(objects.length === 1 ? objects[0] : new ActiveSelection(objects, { canvas: this.canvas }));
+      } finally { this.changingSelection = false; }
+      this.configure(); this.canvas.requestRenderAll(); this.emit();
+    } else {
+      const object = this.copyableLayer();
+      if (object) this.moveLayer(object.editorId!, event.key === "ArrowUp" ? (event.shiftKey ? "top" : "up") : (event.shiftKey ? "bottom" : "down"));
+    }
+    return true;
+  }
+  private switchModeByKey(event: KeyboardEvent) {
+    const key = event.key.toLowerCase();
+    if ((key !== "v" && key !== "h") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return false;
+    const target = event.target instanceof Element ? event.target : undefined;
+    const root = this.viewport.closest(".app-shell") ?? this.viewport;
+    const inEditor = !!target && (root.contains(target) ||
+      (target === document.body && this.clipboardFocus));
+    const control = target?.closest("input,textarea,select,[contenteditable],dialog,[role='dialog'],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']");
+    const ownsKeys = control && control !== root && root.contains(control);
+    // An ERP dialog may contain the entire editor; only other dialogs block its shortcuts.
+    const blockedByDialog = [...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")].some(dialog => !dialog.contains(root));
+    if (!inEditor || ownsKeys || blockedByDialog || this.locked ||
+      this.space || this.maskHidden || this.gestureActive || this.selection.draft || this.shapeDraft || this.preparingColorPick ||
+      this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
+    event.preventDefault(); event.stopPropagation();
+    this.setTool(key === "v" ? "select" : "pan");
+    return true;
+  }
   private keyDown = (event: KeyboardEvent) => {
     if (!POSITION_KEYS[event.key] && event.key !== "Shift") this.finishNudge();
     if (this.confirmation) return;
     if (this.submitting || this.savedRecord || this.closed) { if (["Escape", "Enter", "Delete", "Backspace"].includes(event.key)) event.preventDefault(); return; }
     if ((this.colorPick || this.preparingColorPick) && event.key === "Escape") { event.preventDefault(); this.cancelColorPick(); return; }
     if (event.isComposing || event.defaultPrevented) return;
+    if (this.layerShortcut(event)) return;
     if (POSITION_KEYS[event.key]) { this.nudgeSelection(event); return; }
     const command = event.ctrlKey || event.metaKey;
     if (this.isInput(event.target)) return;
+    if (this.switchModeByKey(event)) return;
     // Focused controls own activation keys; canvas shortcuts must not consume them.
     if (event.target instanceof Element && event.target.closest("button,a[href],summary,[role='button']") && (event.code === "Space" || event.key === "Enter")) return;
     if (event.code === "Space" && !this.locked) {

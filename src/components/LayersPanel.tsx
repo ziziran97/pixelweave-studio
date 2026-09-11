@@ -92,10 +92,10 @@ export function LayersPanel({ view, engine, disabled, hidden = false, locate, co
       </div>
       {view.selectionCount > 1 && <span className="layer-selection-count" role="status">已选 {view.selectionCount} 个图层</span>}
       <div className="layer-order" role="group" aria-label="图层操作">
-        <ActionButton floating hint={movable && !canUp ? "已在最上层" : "置顶"} aria-label="置顶" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "top")}><ArrowUpToLine /></ActionButton>
-        <ActionButton floating hint={movable && !canUp ? "已在最上层" : "上移一层"} aria-label="上移一层" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "up")}><ArrowUp /></ActionButton>
-        <ActionButton floating hint={movable && !canDown ? "已在最下层" : "下移一层"} aria-label="下移一层" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "down")}><ArrowDown /></ActionButton>
-        <ActionButton floating hint={movable && !canDown ? "已在最下层" : "置底，仍在底图上方"} aria-label="置底" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "bottom")}><ArrowDownToLine /></ActionButton>
+        <ActionButton floating hint={movable && !canUp ? "已在最上层" : "置顶 Ctrl+Shift+↑"} aria-label="置顶" aria-keyshortcuts="Control+Shift+ArrowUp Meta+Shift+ArrowUp" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "top")}><ArrowUpToLine /></ActionButton>
+        <ActionButton floating hint={movable && !canUp ? "已在最上层" : "上移一层 Ctrl+↑"} aria-label="上移一层" aria-keyshortcuts="Control+ArrowUp Meta+ArrowUp" disabled={disabled || !canUp} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "up")}><ArrowUp /></ActionButton>
+        <ActionButton floating hint={movable && !canDown ? "已在最下层" : "下移一层 Ctrl+↓"} aria-label="下移一层" aria-keyshortcuts="Control+ArrowDown Meta+ArrowDown" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "down")}><ArrowDown /></ActionButton>
+        <ActionButton floating hint={movable && !canDown ? "已在最下层" : "置底 Ctrl+Shift+↓，仍在底图上方"} aria-label="置底" aria-keyshortcuts="Control+Shift+ArrowDown Meta+Shift+ArrowDown" disabled={disabled || !canDown} onClick={() => view.selectedId && engine?.moveLayer(view.selectedId, "bottom")}><ArrowDownToLine /></ActionButton>
         <ActionButton floating className="layer-copy" hint="复制图层 Ctrl+D" aria-label="复制图层" disabled={disabled || view.selectionCount !== 1} onClick={() => void engine?.duplicateSelected()}><Copy /></ActionButton>
         <ActionButton floating hint={`${deleteLabel}，可撤销`} aria-label={deleteLabel} disabled={disabled || !view.selectionCount} onClick={() => engine?.deleteSelected()}><Trash2 /></ActionButton>
       </div>
