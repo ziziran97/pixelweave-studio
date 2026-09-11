@@ -23,7 +23,7 @@ export async function checkSelectionInteractions(check: (condition: boolean, mes
   };
   const click = (x: number, y: number) => { mouse("mousedown", x, y); mouse("mouseup", x, y); };
   const drag = (x1: number, y1: number, x2: number, y2: number) => { mouse("mousedown", x1, y1); mouse("mousemove", x2, y2); mouse("mouseup", x2, y2); };
-  const key = (code: string, value: string, type = "keydown", ctrlKey = false) => window.dispatchEvent(new KeyboardEvent(type, { code, key: value, ctrlKey, bubbles: true, cancelable: true }));
+  const key = (code: string, value: string, type = "keydown", ctrlKey = false) => editor.canvas.upperCanvasEl.dispatchEvent(new KeyboardEvent(type, { code, key: value, ctrlKey, bubbles: true, cancelable: true }));
   const at = (x: number, y: number) => {
     const v = editor.canvas.viewportTransform;
     return [...overlay.getContext("2d")!.getImageData(Math.round(x * v[0] + v[4]), Math.round(y * v[3] + v[5]), 1, 1).data].join();

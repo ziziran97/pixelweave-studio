@@ -64,7 +64,7 @@ export async function checkDrawingRefinements(check: (condition: boolean, messag
 
     editor.zoomTo(1); editor.setTool("rect");
     mouse("mousedown", 100, 100); mouse("mousemove", 180, 140); await paint();
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    editor.canvas.upperCanvasEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
     mouse("mouseup", 180, 140); await paint();
     check(!overlayHasPixels() && !state().unfinishedSelection, "取消正在绘制的图形后辅助轮廓立即清除");
 
