@@ -56,7 +56,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
       apiRequests++;
       return new Response(JSON.stringify({ message: "Service unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } });
     }
-    if (url.includes("after-2910x1800")) {
+    if (url.includes("after-970x600")) {
       sampleRequests++;
       if (sampleMode === "fail") return new Response(null, { status: 503 });
       if (sampleMode === "hold") {
@@ -78,8 +78,8 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     check(snapshot().objects.filter(object => object.editorPurpose !== "base").length === 2, "演示前保留独立文字和矩形内容");
     button("选择示例标签区域")!.click(); await paint();
     const selected = snapshot().masks[0], selectedDraft = draft(), selectionRevision = probe().revision;
-    check(snapshot().masks.length === 1 && selected.kind === "rect" && selected.points[0].x === 1899 && selected.points[0].y === 1374 &&
-      selected.points[1].x === 2790 && selected.points[1].y === 1725 && !probe().job && !probe().pending, "选择入口仅设置固定标签区域，不自动执行");
+    check(snapshot().masks.length === 1 && selected.kind === "rect" && selected.points[0].x === 633 && selected.points[0].y === 458 &&
+      selected.points[1].x === 930 && selected.points[1].y === 575 && !probe().job && !probe().pending, "选择入口仅设置固定标签区域，不自动执行");
     button("选择示例标签区域")!.click(); await paint();
     check(probe().revision === selectionRevision && draft() === selectedDraft, "重复选择同一演示区域不增加历史或改变草稿");
     drag(100, 100, 160, 160); await paint(); const changedSelection = draft();
@@ -89,7 +89,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     const readyDraft = draft(), readyRevision = probe().revision;
     sampleMode = "hold";
     const cancelled = run(); await waitFor(() => held.length === 1);
-    check(probe().job?.stage === "waiting" && host.textContent!.includes("固定样图演示") && !!button("取消等待"), "演示使用原等待提示和取消入口，并持续标明固定样图");
+    check(probe().job?.stage === "sample" && host.textContent!.includes("正在加载示例结果") && !!button("取消等待"), "演示下载结果时说明正在加载样图，保留取消入口，不误报算法等待");
     button("取消等待")!.click(); await paint();
     check(!probe().job && !probe().pending && draft() === readyDraft, "取消演示保留底图、独立内容和选区");
     sampleMode = "normal";
@@ -99,7 +99,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     await retry; await waitFor(loaded);
     check(dialog()!.textContent!.includes("固定样图流程演示") && !!button("使用消除结果") && !!button("放弃结果") && !button("关闭示例"),
       "流程演示复用真实结果操作，明确标注模拟且支持使用或放弃");
-    check(probe().pending?.region?.x === 1899 && probe().pending?.region?.width === 891, "流程预览定位实际预设选区，尺寸不变");
+    check(probe().pending?.region?.x === 633 && probe().pending?.region?.width === 297, "流程预览定位实际预设选区，尺寸不变");
     dialog()!.dispatchEvent(new Event("cancel", { cancelable: true })); await paint();
     check(!!dialog()?.open && !!probe().pending, "流程预览 Esc 不直接放弃结果");
     const sampleCount = sampleRequests;
@@ -125,8 +125,8 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     check(host.textContent!.includes("已使用示例结果") && host.textContent!.includes("未保存到任务"), "采用后明确只更新当前演示草稿");
     const composite = await renderDocument(snapshot(), probe().assets, "final"), jpeg = await validateJpeg(composite);
     const pixel = await pixelAt(composite, 350, 300);
-    check(jpeg.width === 2910 && jpeg.height === 1800 && pixel[0] > 240 && pixel[1] < 15 && pixel[2] < 15,
-      "采用后最终 JPG 保持 2910 × 1800，真实合成可见新增矩形");
+    check(jpeg.width === 970 && jpeg.height === 600 && pixel[0] > 240 && pixel[1] < 15 && pixel[2] < 15,
+      "采用后最终 JPG 保持 970 × 600，真实合成可见新增矩形");
     await engine.undo(); await paint();
     check(draft() === readyDraft && baseId() === initialId && !!button("选择示例标签区域"), "采用一步撤销恢复原底图、全部内容和预设选区，可重新演示");
     await engine.undo(true); await paint();
@@ -139,7 +139,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
     check(!!button("选择示例标签区域"), "撤销调色恢复固定样图流程入口");
     check(apiRequests === 0 && JSON.stringify(readEraseTelemetry()) === telemetry, "模拟等待、取消、失败、预览、采用及历史恢复均不请求业务接口或写真实消除统计");
 
-    const upload = engine.uploadReplacement(new File([await picture("#123456", 2910, 1800)], "same-size.jpg", { type: "image/jpeg" }));
+    const upload = engine.uploadReplacement(new File([await picture("#123456", 970, 600)], "same-size.jpg", { type: "image/jpeg" }));
     await waitFor(() => !!probe().confirmation); engine.answerConfirmation(probe().confirmation!.id, true); await upload; await paint();
     engine.selectEraseExampleRegion();
     check(!button("选择示例标签区域") && !snapshot().masks.length && snapshot().source === "upload", "上传同尺寸图片也不冒用内置样图演示，不覆盖上传内容");
@@ -157,7 +157,7 @@ export async function checkEraseDemoFlow(check: (value: boolean, message: string
 
     editorConfig.eraseApiUrl = "/__erase_demo_real_service__"; await mount();
     check(!button("选择示例标签区域") && !!button("查看消除结果示例"), "已配置真实算法时不显示模拟消除入口，仍可独立查看固定结果");
-    engine.setEraseMode("rect"); drag(1899, 1374, 2790, 1725); await paint();
+    engine.setEraseMode("rect"); drag(633, 458, 930, 575); await paint();
     const realDraft = draft(), priorSamples = sampleRequests; await run(); await paint();
     check(apiRequests === 1 && sampleRequests === priorSamples && !probe().pending && draft() === realDraft,
       "真实接口失败保留选区，不回退成固定样图结果");

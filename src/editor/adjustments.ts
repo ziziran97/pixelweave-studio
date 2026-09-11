@@ -1,5 +1,6 @@
 import { FabricImage, filters } from "fabric";
 import { Sharpen } from "./Sharpen";
+import { ensureImageFiltering } from "./imageFiltering";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import type { ImageAdjustments, ImageFilter } from "../types";
 
@@ -51,6 +52,7 @@ export function adjustmentFilters(input: ImageAdjustments): FabricImage["filters
     const preset = IMAGE_FILTERS.find(item => item.id === values.filter)!, amount = values.filterStrength / 100;
     items.push(new filters.ColorMatrix({ matrix: preset.matrix.map((value, i) => IDENTITY[i] + (value - IDENTITY[i]) * amount) as Matrix }));
   }
+  if (items.length) ensureImageFiltering();
   return items;
 }
 

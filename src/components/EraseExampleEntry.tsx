@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Crosshair, Images } from "lucide-react";
 import { ActionButton } from "./ActionButton";
 import { ResultPreview } from "./ResultPreview";
+import { fetchImageBlob } from "../lib/imageLoading";
 
 // The static build-time guard removes the module and both images from production.
 const loadExample = import.meta.env.DEV || import.meta.env.MODE === "demo" ? () => import("../demo/eraseExample") : undefined;
@@ -12,26 +13,40 @@ export function EraseExampleEntry({ disabled, selectRegion }: { disabled: boolea
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const generation = useRef(0), trigger = useRef<HTMLButtonElement | null>(null);
+  const download = useRef<AbortController | undefined>(undefined);
+  const imageUrls = useRef<string[]>([]);
+  const release = () => {
+    download.current?.abort(); download.current = undefined;
+    imageUrls.current.forEach(url => URL.revokeObjectURL(url)); imageUrls.current = [];
+  };
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
-  useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => () => { generation.current++; release(); }, []);
   useEffect(() => {
-    if (disabled) { generation.current++; setLoading(false); setSample(undefined); }
+    if (disabled) { generation.current++; release(); setLoading(false); setSample(undefined); }
   }, [disabled]);
 
   const open = async (button: HTMLButtonElement) => {
     if (!loadExample || disabled || loading || sample) return;
     trigger.current = button;
     const attempt = ++generation.current;
+    const request = new AbortController(); download.current = request;
     const current = () => attempt === generation.current && !disabledRef.current;
     setLoading(true); setError("");
     try {
       const loaded = await loadExample();
-      if (current()) setSample(loaded.default);
-    } catch {
-      if (current()) setError("示例加载失败，请再次点击重试。");
+      if (!current()) return;
+      const options = { signal: request.signal, cache: import.meta.env.DEV ? "default" as const : "force-cache" as const,
+        failureMessage: "示例加载失败，请再次点击重试。", timeoutMessage: "示例加载超时，请检查网络后重试。" };
+      const blobs = await Promise.all([fetchImageBlob(loaded.default.result.beforeUrl, options), fetchImageBlob(loaded.default.result.afterUrl, options)]);
+      if (current()) {
+        imageUrls.current = blobs.map(blob => URL.createObjectURL(blob));
+        setSample({ ...loaded.default, result: { ...loaded.default.result, beforeUrl: imageUrls.current[0], afterUrl: imageUrls.current[1] } });
+      }
+    } catch (reason) {
+      if (current()) { release(); setError(reason instanceof Error && reason.message.includes("示例加载超时") ? "示例加载超时，请检查网络后重试。" : "示例加载失败，请再次点击重试。"); }
     } finally { if (current()) setLoading(false); }
   };
-  const close = () => { setSample(undefined); trigger.current?.focus({ preventScroll: true }); };
+  const close = () => { generation.current++; release(); setSample(undefined); trigger.current?.focus({ preventScroll: true }); };
 
   if (!loadExample) return null;
   return <div className="erase-base-hint">

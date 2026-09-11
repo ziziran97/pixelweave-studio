@@ -88,18 +88,13 @@ button:not(:disabled):hover { filter: brightness(.97); }
 .property-field input:not([type=color]), .property-field select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid #dce4ed; border-radius: 6px; background: #fff; font-size: 12px; }
 .property-field input[type=color] { width: 100%; height: 34px; border: 1px solid #dce4ed; border-radius: 6px; padding: 3px; background: white; }
 .property-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 12px; }
-.color-row { display: flex; align-items: center; gap: 8px; margin: 18px 0; font-size: 11px; }
-.color-row label { flex: 1; }
-.color-row input { width: 30px; height: 30px; border: 0; padding: 0; background: none; }
-.color-row code { color: #8a98a5; font-size: 9px; }
-.slider-row { display: block; margin-bottom: 22px; }
 .slider-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; font-size: 11px; color: #52677e; }
 .slider-title strong { font-size: 10px; padding: 3px 6px; border-radius: 5px; color: #277bc3; background: #eef6fd; }
 .brush-size-value { display: inline-flex; align-items: center; gap: 5px; }
 .brush-size-value input { width: 70px; height: 30px; padding: 0 6px; border: 1px solid #d6e0e9; border-radius: 6px; background: #fff; font-size: 12px; }
 .brush-size-control { margin-bottom: 22px; }
 input[type=range] { width: 100%; height: 4px; accent-color: var(--blue); }
-.field-help, .section-note { font-size: 10px; color: #8292a3; line-height: 1.6; margin: 9px 0 16px; }
+.field-help { font-size: 10px; color: #8292a3; line-height: 1.6; margin: 9px 0 16px; }
 .multi-selection-guide { margin: 0 0 12px; color: #526e88; font-size: 12px; line-height: 1.8; }
 details { border-top: 1px solid #eaf0f6; padding-top: 12px; margin-top: 4px; }
 summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px; }
@@ -212,8 +207,6 @@ summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px;
 .canvas-zoom-controls button svg { width: 17px; height: 17px; }
 .zoom-control .actual-size { width: 44px; font-size: 11px; }
 .original-badge { position: absolute; top: 18px; left: 18px; z-index: 3; color: #3b6586; font-size: 11px; background: #ffffffee; padding: 9px 12px; border-radius: 7px; }
-.capability { font-size: 9px; color: #987443; background: #fff3dd; border-radius: 4px; padding: 4px 6px; }
-.capability.configured { background: #e8f5ee; color: #38866c; }
 .layers-panel { border-left: 1px solid var(--line); display: flex; flex-direction: column; }
 .layers-panel[hidden] { display: none; }
 .layers-heading > span { display: flex; align-items: center; gap: 7px; }
@@ -308,7 +301,6 @@ summary { font-size: 11px; cursor: pointer; color: #526e88; margin-bottom: 15px;
 .check-field input { accent-color: #287dcc; width: 15px; height: 15px; }
 .background-settings { padding: 1px 10px; background: #f5f8fb; border-radius: 8px; margin-bottom: 16px; }
 .drawing-size { margin: 0; }
-.text-style-toggles { margin-bottom: 12px; }
 .picking-hint { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 8; background: #fff; box-shadow: 0 4px 16px #42576b24; border: 1px solid #dce4ec; border-radius: 8px; padding: 9px 12px; font-size: 12px; white-space: nowrap; }
 .picking-hint button { border: 0; background: transparent; color: #287dcc; margin-left: 16px; }
 .submission-dialog { width: min(440px,90vw); padding: 28px; border: 1px solid #d9e4ee; border-radius: 14px; box-shadow: 0 20px 90px #14273840; }

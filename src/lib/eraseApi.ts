@@ -1,4 +1,5 @@
 import type { EraseTelemetryDetails } from "../telemetry";
+import { checkEraseFileSizes } from "./imageLimits";
 
 export function dataUrlToBlob(dataUrl: string) {
   const comma = dataUrl.indexOf(","), meta = dataUrl.slice(0, comma), payload = dataUrl.slice(comma + 1);
@@ -153,6 +154,7 @@ async function requestErase(input: EraseRequest) {
 export async function callEraseApi(input: EraseRequest) {
   try {
     input.signal.throwIfAborted();
+    checkEraseFileSizes(input.image, input.mask);
     const result = await requestErase(input);
     input.signal.throwIfAborted();
     return result;

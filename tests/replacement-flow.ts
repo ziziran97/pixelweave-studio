@@ -20,7 +20,7 @@ export async function checkReplacementFlow(check: (condition: boolean, message: 
     confirmResult: async id => { queryIds.push(id); return queryOutcome; },
     onClose: () => { closeCalls++; if (throwOnClose) throw new Error("测试刷新失败"); },
   };
-  const { editor, state, click, dispose, confirm } = createEditor(adapter);
+  const { editor, state, dispose, confirm } = createEditor(adapter);
   try {
     await editor.initialize(); editor.setTool("text"); await editor.addText({ x: 40, y: 40 }); await settle(() => editor.canvas.getActiveObject() instanceof Textbox && !state().busy);
     const text = editor.canvas.getActiveObject() as Textbox;

@@ -1,5 +1,5 @@
-import beforeUrl from "../../docs/demo/eraser/before-2910x1800.png";
-import afterUrl from "../../docs/demo/eraser/after-2910x1800.png";
+import beforeUrl from "../../docs/demo/eraser/before-970x600.jpg";
+import afterUrl from "../../docs/demo/eraser/after-970x600.jpg";
 import sample from "../../docs/demo/eraser/sample.json";
 
 // Imported only from the development/demo branch; never copied through public/.

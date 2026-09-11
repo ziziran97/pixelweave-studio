@@ -42,9 +42,23 @@ function hasCoverage(ctx: CanvasRenderingContext2D, width: number, height: numbe
 
 export function hasMaskCoverage(strokes: MaskStroke[], size: DocumentSize) {
   if (!strokes.some(stroke => stroke.operation === "add")) return false;
-  const canvas = document.createElement("canvas"); canvas.width = size.width; canvas.height = size.height;
+  // Subtraction cannot add coverage outside the additions. Keep original-pixel
+  // rasterization while avoiding a full-image canvas for a small selected region.
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const stroke of strokes) if (stroke.operation === "add") {
+    const padding = stroke.kind === "brush" ? stroke.width / 2 + 1 : 1;
+    for (const point of stroke.points) {
+      left = Math.min(left, point.x - padding); top = Math.min(top, point.y - padding);
+      right = Math.max(right, point.x + padding); bottom = Math.max(bottom, point.y + padding);
+    }
+  }
+  left = Math.max(0, Math.floor(left)); top = Math.max(0, Math.floor(top));
+  right = Math.min(size.width, Math.ceil(right)); bottom = Math.min(size.height, Math.ceil(bottom));
+  if (right <= left || bottom <= top) return false;
+  const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   try {
+    ctx.translate(-left, -top);
     strokes.forEach(stroke => paintStroke(ctx, stroke));
     return hasCoverage(ctx, canvas.width, canvas.height);
   } finally { canvas.width = canvas.height = 0; }

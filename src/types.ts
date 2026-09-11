@@ -1,4 +1,4 @@
-import type { FabricObject, SerializedObjectProps } from "fabric";
+import type { SerializedObjectProps } from "fabric";
 
 export type ToolId = "select" | "pan" | "erase" | "draw" | "text" | "rect" | "circle" | "adjust";
 export type WorkspaceId = "erase" | "draw" | "text" | "adjust";
@@ -40,7 +40,6 @@ declare module "fabric" {
   interface SerializedObjectProps extends EditorMetadata {}
 }
 
-export type EditorObject = FabricObject;
 export type ObjectData = Partial<SerializedObjectProps> & { type: string; src?: string; objects?: ObjectData[]; [key: string]: unknown };
 export type MaskStroke = { kind: "brush" | "rect" | "polygon"; operation: "add" | "subtract"; points: PointData[]; width: number; breaks?: number[] };
 
@@ -109,7 +108,7 @@ export type TextProperties = {
   shadowEnabled?: boolean; strokeEnabled?: boolean; boldRestoreWeight?: string;
 };
 export type ImageRegion = { x: number; y: number; width: number; height: number };
-export type EraseStage = "preparing" | "waiting" | "preview";
+export type EraseStage = "preparing" | "waiting" | "sample" | "preview";
 export type PendingResult = {
   assetId: string; beforeUrl: string; afterUrl: string;
   documentId: string; revision: number;
@@ -126,6 +125,7 @@ export type EditorView = {
   ready: boolean; busy: boolean; task: boolean; notice: string;
   eraseStage?: EraseStage; eraseStageStartedAt?: number;
   canSelectEraseExample?: boolean;
+  canRetryInitialImage?: boolean;
   noticeId: number; noticePresentation: "quiet" | "transient" | "persistent";
   tool: ToolId; eraseMode: EraseMode; maskOperation: "add" | "subtract";
   workspace: WorkspaceId; drawingTool: "draw" | "rect" | "circle"; propertiesRequest: number;

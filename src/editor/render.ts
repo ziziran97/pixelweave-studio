@@ -6,6 +6,7 @@ import type { Assets } from "./assets";
 import { deepCopy } from "./model";
 import { ensureObjectFonts } from "./fonts";
 import { editorConfig } from "../config";
+import { ensureImageFiltering } from "./imageFiltering";
 
 export function hydrate(objects: ObjectData[], assets: Assets) {
   return objects.map(item => {
@@ -17,6 +18,7 @@ export function hydrate(objects: ObjectData[], assets: Assets) {
 
 export async function makeSurface(snapshot: DocumentSnapshot, assets: Assets, objects = snapshot.objects) {
   await ensureObjectFonts(objects);
+  if (objects.some(object => Array.isArray(object.filters) && object.filters.length)) ensureImageFiltering();
   const surface = new StaticCanvas(undefined, { width: snapshot.size.width, height: snapshot.size.height, enableRetinaScaling: false, backgroundColor: "#ffffff" });
   try { await surface.loadFromJSON({ objects: hydrate(objects, assets) }); return surface; }
   catch (error) { await surface.dispose(); throw error; }

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "../src/App";
 import { EraseExampleEntry } from "../src/components/EraseExampleEntry";
 import { readEraseTelemetry } from "../src/telemetry";
+import { validateJpeg } from "../src/editor/assets";
 import { createEditor, frame, picture } from "./editing-tools";
 import { checkEraseDemoFlow } from "./erase-demo-flow";
 import "../src/styles.css";
@@ -22,7 +23,7 @@ const waitFor = async (ready: () => boolean) => {
 const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const dialog = () => host.querySelector<HTMLDialogElement>(".result-dialog");
 const images = () => [...host.querySelectorAll<HTMLImageElement>(".result-images img")];
-const loaded = () => images().length === 2 && images().every(image => image.complete && image.naturalWidth === 2910) && !button("100% 查看对比图片").disabled;
+const loaded = () => images().length === 2 && images().every(image => image.complete && image.naturalWidth === 970) && !button("100% 查看对比图片").disabled;
 const closeButton = () => host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!;
 const aligned = () => images()[0].style.cssText === images()[1].style.cssText;
 const originalFetch = window.fetch;
@@ -48,19 +49,19 @@ try {
   const entry = button("查看消除结果示例");
   check(!!entry && !entry.disabled && test.state().hasMask, "已有图片、对象和选区时可打开独立固定样例");
   entry.focus(); entry.click(); await waitFor(loaded);
-  check(dialog()!.textContent!.includes("固定样例 · 效果示意，未调用消除服务") && images().every(image => image.naturalHeight === 1800), "实际加载 2910 × 1800 的前后样图，明确标注效果示意");
+  check(dialog()!.textContent!.includes("固定样例 · 效果示意，未调用消除服务") && images().every(image => image.naturalHeight === 600), "实际加载 970 × 600 的前后样图，明确标注效果示意");
   check(closeButton().textContent === "关闭示例" && host.querySelectorAll(".result-footer button").length === 1 && !dialog()!.textContent!.includes("使用消除结果"), "示例只提供关闭，不提供采用或放弃真实结果的操作");
   check(document.activeElement === closeButton(), "打开示例默认聚焦关闭按钮");
   const fittedWidth = images()[0].width;
   check(aligned() && fittedWidth <= host.querySelector<HTMLElement>(".result-viewport")!.clientWidth + 1, "示例初始完整适配，两侧同步");
   button("100% 查看对比图片").click(); await paint();
-  check(images()[0].width === 2910 && aligned(), "示例 100% 查看按真实像素尺寸展示");
+  check(images()[0].width === 970 && aligned(), "示例 100% 查看按真实像素尺寸展示");
   button("查看本次消除区域").click(); await paint();
   const pane = host.querySelector<HTMLElement>(".result-viewport")!, paneBounds = pane.getBoundingClientRect();
-  const imageBounds = images()[0].getBoundingClientRect(), scale = images()[0].width / 2910;
-  check(aligned() && images()[0].width > fittedWidth && imageBounds.left + 1899 * scale >= paneBounds.left - 1 &&
-    imageBounds.top + 1374 * scale >= paneBounds.top - 1 && imageBounds.left + 2790 * scale <= paneBounds.right + 1 && imageBounds.top + 1725 * scale <= paneBounds.bottom + 1,
-    "消除区域定位到等比放大后的橙色标签范围，两侧同步且完整包含示例区域");
+  const imageBounds = images()[0].getBoundingClientRect(), scale = images()[0].width / 970;
+  check(aligned() && images()[0].width > fittedWidth && imageBounds.left + 633 * scale >= paneBounds.left - 1 &&
+    imageBounds.top + 458 * scale >= paneBounds.top - 1 && imageBounds.left + 930 * scale <= paneBounds.right + 1 && imageBounds.top + 575 * scale <= paneBounds.bottom + 1,
+    "消除区域定位到 970 × 600 样图的橙色标签范围，两侧同步且完整包含示例区域");
   const transform = images()[0].style.transform;
   pane.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })); await paint();
   check(images()[0].style.transform !== transform && aligned(), "示例视图支持键盘平移，两侧保持同步");
@@ -90,11 +91,14 @@ try {
   root.render(createElement(App, { preview: true }));
   await waitFor(() => !!button("查看消除结果示例") && !button("查看消除结果示例").disabled);
   check(host.querySelector<HTMLButtonElement>(".erase-submit")?.disabled === true && !!button("查看消除结果示例"), "独立页面无需选区即可看示例，开始消除仍要求真实选区");
-  check(host.querySelector(".document-size")?.textContent === "2910 × 1800 px", "独立预览默认工作图片为 2910 × 1800");
+  check(host.querySelector(".document-size")?.textContent === "970 × 600 px", "独立预览默认工作图片为 970 × 600");
   button("查看消除结果示例").click(); await waitFor(loaded);
   check(!!dialog()?.open, "消除笔面板入口可打开同一结果查看弹窗");
   const initialImage = await originalFetch(host.querySelector<HTMLImageElement>(".layer-thumb img")!.src).then(response => response.blob());
   const sampleImage = await originalFetch(images()[0].src).then(response => response.blob());
+  const afterSampleImage = await originalFetch(images()[1].src).then(response => response.blob());
+  const encodedSamples = await Promise.all([validateJpeg(sampleImage), validateJpeg(afterSampleImage)]);
+  check(encodedSamples.every(sample => sample.width === 970 && sample.height === 600), "消除前后样图均为可解码的真实 JPG，保持 970 × 600");
   const digest = async (blob: Blob) => new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())).join(",");
   check(await digest(initialImage) === await digest(sampleImage), "默认底图与消除前样图使用完全相同的图片资源");
   closeButton().click(); await paint();

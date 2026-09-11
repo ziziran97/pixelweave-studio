@@ -2,12 +2,14 @@ import { ActiveSelection, Ellipse, FabricImage, Path, Point, Rect, Textbox, util
 import type { FabricObject, TPointerEventInfo } from "fabric";
 import { editorConfig } from "../config";
 import { callEraseApi, eraseFailureCode } from "../lib/eraseApi";
+import { fetchImageBlob } from "../lib/imageLoading";
+import { checkImageFileSize, checkEraseFileSizes } from "../lib/imageLimits";
 import { EraseTelemetry } from "../telemetry";
 import type { EraseExitReason, EraseTelemetryRun } from "../telemetry";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
 import type { DocumentSnapshot, EditorView, EraseMode, EraseStage, ImageAdjustments, ImageRegion, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
-import { Assets, defaultImage, validateJpeg, prepareUploadedImage } from "./assets";
+import { Assets, defaultImage, validateJpeg, prepareUploadedImage, ImageSizeError } from "./assets";
 import type { ImageAsset } from "./assets";
 import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumentContent, uid } from "./model";
 import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from "./mask";
@@ -57,6 +59,8 @@ export class EditorController {
   private generation = 0;
   private disposed = false;
   private ready = false;
+  private initialRequest?: AbortController;
+  private initialLoadFailed = false;
   private busy = false;
   private job?: { id: string; controller: AbortController; stage: EraseStage; startedAt: number; illustrative?: boolean };
   private previewEraseBaseId?: string;
@@ -284,6 +288,7 @@ export class EditorController {
       ready: this.ready, busy: this.busy, task: !!this.job, notice: this.notice, noticeId: this.noticeId, noticePresentation: this.noticePresentation, tool: this.tool, eraseMode: this.selection.mode,
       eraseStage: this.job?.stage, eraseStageStartedAt: this.job?.startedAt,
       canSelectEraseExample: this.canPreviewErase(),
+      canRetryInitialImage: !this.ready && this.initialLoadFailed && !this.initialRequest && !this.closed,
       workspace: this.workspace, drawingTool: this.lastDrawingTool, propertiesRequest: this.propertiesRequest,
       maskOperation: this.operation, brushSize: this.brushSize, drawSize: this.drawSize, color: this.color,
       zoom: this.canvas.getZoom(), size: this.size,
@@ -348,18 +353,34 @@ export class EditorController {
   }
 
   async initialize() {
+    if (this.disposed || this.closed || this.ready || this.initialRequest || this.busy) return;
+    const request = new AbortController(); this.initialRequest = request; this.initialLoadFailed = false;
+    this.tool = "erase"; this.notice = "正在载入图片…"; this.emit();
     const token = this.generation;
     try {
       const url = this.integration?.initialImage ?? (new URLSearchParams(location.search).get("image")?.trim() || editorConfig.defaultImageUrl);
-      const blob = url instanceof Blob ? url : url ? await fetch(url).then(response => { if (!response.ok) throw new Error("默认图片无法加载"); return response.blob(); }) : await defaultImage(this.preview && !this.integration);
-      if (!this.disposed && token === this.generation) {
+      const blob = url instanceof Blob ? url : url ? await fetchImageBlob(url, { signal: request.signal }) : await defaultImage(this.preview && !this.integration, request.signal);
+      if (!this.disposed && !this.closed && !request.signal.aborted && token === this.generation) {
         await this.openImage(blob, "当前图片", false);
+        if (!this.ready) this.initialLoadFailed = true;
         const baseId = this.original?.objects.find(object => object.editorPurpose === "base")?.editorAssetId;
         if (previewErase && this.preview && !this.integration && !url && !this.disposed && baseId && this.assets.get(baseId).blob === blob) {
           this.previewEraseBaseId = baseId; this.emit();
         }
       }
-    } catch (error) { this.report(error); }
+    } catch (error) {
+      if (!this.disposed && !this.closed && !request.signal.aborted && token === this.generation) {
+        this.initialLoadFailed = true; this.report(error);
+      }
+    } finally {
+      if (this.initialRequest === request) { this.initialRequest = undefined; this.emit(); }
+    }
+  }
+
+  async retryInitialImage() {
+    if (!this.initialLoadFailed) return;
+    await this.initialize();
+    if (this.ready && !this.closed && !this.disposed) this.setTool("erase");
   }
 
   private imageData(asset: ImageAsset, name: string): ObjectData {
@@ -372,6 +393,7 @@ export class EditorController {
   async openImage(blob: Blob, name: string, confirm = true) {
     if (this.disposed || this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord) return;
     if (confirm && (this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("switch")) return;
+    if (confirm) this.initialRequest?.abort();
     this.cancelTask("image_change"); this.discardResult("image_change"); this.compareOriginal = false; this.canvas.beforeAdjustments = false; this.editingViewport = undefined; this.editingFitted = undefined;
     this.finishText(); this.cancelDraft();
     const token = ++this.generation;
@@ -384,9 +406,9 @@ export class EditorController {
       await this.loadSnapshot(snapshot, token);
       if (this.disposed || token !== this.generation) return;
       this.original = deepCopy(snapshot); this.history.reset(this.snapshot()); this.original = deepCopy(this.history.current);
+      const base = this.canvas.getObjects().find(object => object.editorPurpose === "base");
+      this.originalElement = base instanceof FabricImage ? base.getElement() as HTMLImageElement : undefined;
       this.documentId = uid("document"); this.imageSessionId = uid("image-session"); this.revision = 0; this.ready = true; this.closed = false; this.source = "online"; this.nameCounts = {};
-      this.originalElement = new Image(); this.originalElement.src = asset.url;
-      await this.originalElement.decode();
       this.notice = "图片已就绪，可以开始编辑";
       this.tool = "select"; this.fit();
     } catch (error) { this.report(error); }
@@ -746,6 +768,7 @@ export class EditorController {
   }
   async uploadReplacement(file: File) {
     if (!this.ready || this.confirmation || this.busy || this.submitting || this.savedRecord || this.closed || this.colorPick || this.colorEdit || this.drawingInProgress || this.canvas.beforeAdjustments) return;
+    try { checkImageFileSize(file); } catch (error) { this.report(error); return; }
     if ((this.dirty || this.job || this.pending || this.selection.draft || this.shapeDraft) && !await this.confirmAction("upload")) return;
     this.busy = true; this.configure(); this.notice = "正在校验并载入图片…"; this.emit();
     const token = this.generation;
@@ -950,6 +973,7 @@ export class EditorController {
     if (this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord || this.closed) return;
     if ((this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("close")) return;
     this.cancelTask("close"); this.discardResult("close"); this.cancelColorPick(); this.cancelDraft();
+    this.initialRequest?.abort();
     this.generation++; this.closed = true; this.configure(); this.emit();
     try { await this.integration?.onClose({ reason: "discard" }); }
     catch { if (!this.disposed) { this.closed = false; this.notice = "返回审核失败，请重试"; this.configure(); this.emit(); } }
@@ -1467,7 +1491,7 @@ export class EditorController {
   private setEraseStage(stage: EraseStage) {
     if (!this.job) return;
     this.job.stage = stage; this.job.startedAt = Date.now();
-    this.notice = { preparing: "正在准备图片和选区…", waiting: "正在等待消除结果…", preview: "正在生成对比预览…" }[stage];
+    this.notice = { preparing: "正在准备图片和选区…", waiting: "正在等待消除结果…", sample: previewErase?.loadingNotice ?? "", preview: "正在生成对比预览…" }[stage];
     if (previewErase && this.job.illustrative) this.notice = `固定样图演示 · ${this.notice}`;
     this.emit();
   }
@@ -1487,12 +1511,12 @@ export class EditorController {
     this.notice = "已选择示例标签区域，点击「开始消除」体验模拟流程"; this.emit();
   }
 
-  private async generateResultPreview(snapshot: DocumentSnapshot, result: PendingResult, current: () => boolean) {
+  private async generateResultPreview(snapshot: DocumentSnapshot, result: PendingResult, current: () => boolean, sourcePreview?: Blob) {
     const run = this.eraseRun, attempt = ++this.erasePreviewAttempt;
     let beforeUrl: string | undefined, afterUrl: string | undefined;
     try {
       const next = applyResult(snapshot, this.imageData(this.assets.get(result.assetId), "消除结果"));
-      const before = await renderDocument(snapshot, this.assets, "final");
+      const before = sourcePreview ?? await renderDocument(snapshot, this.assets, "final");
       if (!current()) return;
       const after = await renderDocument(next, this.assets, "final");
       if (!current()) return;
@@ -1542,20 +1566,26 @@ export class EditorController {
       if (!current()) return;
       const image = await renderDocument(snapshot, this.assets, "base");
       if (!current()) return;
-      this.setEraseStage("waiting");
+      checkEraseFileSizes(image, mask);
+      this.setEraseStage(illustrative ? "sample" : "waiting");
       run?.requestStarted();
-      const result = illustrative ? await previewErase!.result(job.controller.signal) : await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal,
+      const result = illustrative ? await previewErase!.result(job.controller.signal, () => { if (current()) this.setEraseStage("waiting"); }) : await callEraseApi({ apiUrl, image, mask, ...snapshot.size, documentId, revision, signal: job.controller.signal,
         requestId: job.id, onResponse: details => { if (current()) run?.response(details); } });
       if (!current()) return;
       this.setEraseStage("preview");
       let asset: ImageAsset;
       try { asset = await this.assets.add(result); }
-      catch { if (!current()) return; throw new Error("消除结果图片无法读取，请稍后重试"); }
+      catch (error) {
+        if (!current()) return;
+        if (error instanceof ImageSizeError) throw new Error("消除结果宽、高均不能超过 5000 px");
+        throw new Error("消除结果图片无法读取，请稍后重试");
+      }
       heldAssets.add(asset.id);
       if (!current()) return;
       if (asset.width !== snapshot.size.width || asset.height !== snapshot.size.height) throw new Error("消除结果尺寸与当前图片不一致，未采用，请稍后重试");
       run?.requestFinished("success");
-      await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region, ...(illustrative ? { illustrative: true } : {}) }, current);
+      const onlyBaseVisible = !snapshot.objects.some(object => object.editorPurpose !== "base" && object.visible !== false);
+      await this.generateResultPreview(snapshot, { assetId: asset.id, beforeUrl: "", afterUrl: "", documentId, revision, region, ...(illustrative ? { illustrative: true } : {}) }, current, onlyBaseVisible ? image : undefined);
     } catch (error) {
       if (current()) {
         if (job.stage === "preparing") run?.preparationFailed(); else run?.requestFinished("failure", eraseFailureCode(error));
@@ -1600,7 +1630,7 @@ export class EditorController {
   }
   cancelTask(reason: EraseExitReason = "user_cancel") {
     if (!this.job) return;
-    this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
+    if (this.job.stage !== "sample") this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
     if (!this.pending) this.eraseRun?.decision("no_decision", reason);
     this.job.controller.abort(); this.job = undefined;
     if (this.pending?.previewPreparing) this.pending = { ...this.pending, previewPreparing: false };
@@ -1835,12 +1865,13 @@ export class EditorController {
   };
   private beforeUnload = (event: BeforeUnloadEvent) => { if (!this.closed && !this.savedRecord && this.ready && (this.dirty || this.job || this.pending || this.submitting)) { event.preventDefault(); event.returnValue = ""; } };
   private finishEraseTelemetry(reason: "page_exit" | "unmount") {
-    if (this.job) this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
+    if (this.job && this.job.stage !== "sample") this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
     this.eraseRun?.decision("no_decision", reason);
   }
   private pageHide = (event: PageTransitionEvent) => { if (!event.persisted) this.finishEraseTelemetry("page_exit"); };
 
   dispose() {
+    this.initialRequest?.abort(); this.originalElement = undefined;
     this.clipboard = undefined; this.numberEdit = undefined;
     this.previewSubmission?.controller.abort(); this.previewSubmission = undefined; this.submissionRun++;
     this.finishEraseTelemetry("unmount");
