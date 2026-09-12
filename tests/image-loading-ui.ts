@@ -4,6 +4,7 @@ import App from "../src/App";
 import { fetchImageBlob } from "../src/lib/imageLoading";
 import { EditorController } from "../src/editor/EditorController";
 import type { EditorIntegration } from "../src/integration";
+import { editorConfig } from "../src/config";
 import { checkLargeImages } from "./large-images";
 import { checkImageFileLimits } from "./image-file-limits";
 import { frame, picture, settle } from "./editing-tools";
@@ -17,6 +18,7 @@ const check = (ok: boolean, message: string) => {
 document.getElementById("results")!.style.cssText = "position:fixed;bottom:0;left:0;max-height:120px;overflow:auto;background:white;z-index:100";
 const host = document.getElementById("test-root")!, root = createRoot(host);
 const originalFetch = window.fetch, originalInitialize = EditorController.prototype.initialize;
+const originalLocation = location.href, originalDefaultImage = editorConfig.defaultImageUrl;
 const paint = async () => { await frame(); await frame(); };
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 const integration = (initialImage: string | Blob): EditorIntegration => ({ initialImage, context: { taskId: "load-check", imageId: "test" },
@@ -28,6 +30,34 @@ let requests = 0;
 try {
   const normal = await picture("#408080", 1464, 600);
   EditorController.prototype.initialize = function () { engine = this; return originalInitialize.call(this); };
+  let fallbackRequests = 0, saved = 0;
+  const missingImageHost = integration("");
+  missingImageHost.replace = async () => { saved++; return { status: "pending" }; };
+  window.history.replaceState(null, "", "?image=/__unexpected_query_image__");
+  editorConfig.defaultImageUrl = "/__unexpected_default_image__";
+  window.fetch = async (input, init) => {
+    if (String(input).startsWith("/__unexpected_")) { fallbackRequests++; return new Response(normal); }
+    return originalFetch(input, init);
+  };
+  for (const [label, image] of [["缺失", undefined], ["null", null], ["空字符串", ""], ["空白字符串", " \t\n "], ["空文件", new Blob()]] as const) {
+    const previous = engine;
+    const source = { ...missingImageHost, initialImage: image as unknown as string | Blob };
+    root.render(createElement(App, { integration: source, preview: true }));
+    await settle(() => engine !== previous); await paint();
+    check(!!button("重新加载图片") && host.textContent!.includes("未获取到待编辑图片"), `宿主初始图片${label}时明确提示缺图并保留重试入口`);
+    check(!host.querySelector(".document-size") && !host.querySelector(".layer-thumb img") &&
+      !!button("文字")?.disabled && !!button("替换图片")?.disabled && !!button("上传本地图片")?.disabled,
+      `宿主初始图片${label}时不以占位图进入编辑或替换`);
+    await engine.submitReplacement();
+    check(fallbackRequests === 0 && saved === 0, "宿主缺图不回退页面参数或环境默认图，也不调用保存");
+    button("重新加载图片")!.click(); await paint();
+    check(host.textContent!.includes("未获取到待编辑图片") && !!button("替换图片")?.disabled, "缺图期间重复重试仍保持阻止编辑的状态");
+    source.initialImage = normal;
+    button("重新加载图片")!.click(); await settle(() => !button("消除笔")?.disabled); await paint();
+    check(host.querySelector(".document-size")?.textContent === "1464 × 600 px" && !!button("撤销")?.disabled && fallbackRequests === 0,
+      "宿主补充有效图片后重试打开真实图片，不新增历史或借用其他图片来源");
+  }
+  window.history.replaceState(null, "", originalLocation); editorConfig.defaultImageUrl = originalDefaultImage;
   window.fetch = async (input, init) => {
     if (String(input) === "/__initial_load__") {
       requests++;
@@ -100,6 +130,7 @@ try {
 } catch (error) { reports.push(`FAIL ${(error as Error).message}\n${(error as Error).stack ?? ""}`); }
 finally {
   held.resolve(new Response(null, { status: 499 })); root.unmount();
+  window.history.replaceState(null, "", originalLocation); editorConfig.defaultImageUrl = originalDefaultImage;
   window.fetch = originalFetch; EditorController.prototype.initialize = originalInitialize;
   document.getElementById("results")!.textContent = reports.join("\n");
 }

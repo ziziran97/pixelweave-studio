@@ -9,7 +9,7 @@ import type { EraseExitReason, EraseTelemetryRun } from "../telemetry";
 import { DEFAULT_ADJUSTMENTS } from "../types";
 import { adjustmentFilters, normalizeAdjustments } from "./adjustments";
 import type { DocumentSnapshot, EditorView, EraseMode, EraseStage, ImageAdjustments, ImageRegion, MaskStroke, ObjectData, PendingResult, PointData, TextProperties, ToolId, ShapeProperties } from "../types";
-import { Assets, defaultImage, validateJpeg, prepareUploadedImage, ImageSizeError } from "./assets";
+import { Assets, defaultImage, validateJpeg, prepareUploadedImage, ImageSizeError, MISSING_INITIAL_IMAGE_MESSAGE } from "./assets";
 import type { ImageAsset } from "./assets";
 import { applyResult, assetIds, deepCopy, History, SERIALIZED_PROPS, sameDocumentContent, uid } from "./model";
 import { exportMask, hasMaskCoverage, paintStroke, subtractionChangesMask } from "./mask";
@@ -227,7 +227,8 @@ export class EditorController {
     });
     this.observer.observe(viewport);
     window.addEventListener("keydown", this.keyDown);
-    window.addEventListener("keyup", this.keyUp);
+    // Finish owned gestures before dialogs or controls stop the release event.
+    window.addEventListener("keyup", this.keyUp, true);
     window.addEventListener("blur", this.windowBlur);
     window.addEventListener("focusin", this.windowFocusIn);
     document.addEventListener("visibilitychange", this.finishNudge);
@@ -362,7 +363,12 @@ export class EditorController {
     this.tool = "erase"; this.notice = "正在载入图片…"; this.emit();
     const token = this.generation;
     try {
-      const url = this.integration?.initialImage ?? (new URLSearchParams(location.search).get("image")?.trim() || editorConfig.defaultImageUrl);
+      // A host must supply its own image; standalone defaults must never hide a missing business image.
+      const source = this.integration ? this.integration.initialImage : new URLSearchParams(location.search).get("image")?.trim() || editorConfig.defaultImageUrl;
+      const url = typeof source === "string" ? source.trim() : source;
+      if (this.integration && !(url instanceof Blob ? url.size > 0 : typeof url === "string" && url.length > 0)) {
+        throw new Error(MISSING_INITIAL_IMAGE_MESSAGE);
+      }
       const blob = url instanceof Blob ? url : url ? await fetchImageBlob(url, { signal: request.signal }) : await defaultImage(this.preview && !this.integration, request.signal);
       if (!this.disposed && !this.closed && !request.signal.aborted && token === this.generation) {
         await this.openImage(blob, "当前图片", false);
@@ -2026,7 +2032,7 @@ export class EditorController {
     this.colorLens?.remove(); this.colorLens = undefined; this.colorEdit = undefined;
     this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
     this.colorPick = undefined; this.disposed = true; this.generation++; this.job?.controller.abort(); this.observer.disconnect();
-    window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp); window.removeEventListener("blur", this.windowBlur);
+    window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp, true); window.removeEventListener("blur", this.windowBlur);
     window.removeEventListener("focusin", this.windowFocusIn); document.removeEventListener("visibilitychange", this.finishNudge);
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);
     window.removeEventListener("pointerdown", this.windowPointerDown, true);
