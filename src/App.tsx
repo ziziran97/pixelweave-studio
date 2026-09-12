@@ -63,6 +63,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
   const canvasPointer = useRef<number | undefined>(undefined);
   const settingsRequest = useRef(0);
   const [layerLocation, setLayerLocation] = useState<{ id: string; request: number }>();
+  const propertiesRef = useRef<HTMLDivElement>(null), lastProblemScroll = useRef(0);
   useEffect(() => {
     let cancelled = false;
     let controller: EditorController | undefined;
@@ -147,6 +148,16 @@ export default function App({ integration, preview = false }: { integration?: Ed
       setSettingsOpen(true);
     }
   }, [view.propertiesRequest, view.selectionCount, view.tool, canvasInteracting, locked, view.unfinishedSelection, settingsOpen, engine, view.zoom]);
+  useLayoutEffect(() => {
+    if (!layerLocation || lastProblemScroll.current === layerLocation.request) return;
+    if (view.selectedId === layerLocation.id && view.textError) {
+      if (!settingsOpen) return;
+      // Reveal the current text and its warning below the sticky Add button.
+      // Scroll only the property panel, once per explicit problem-location request.
+      if (propertiesRef.current) propertiesRef.current.scrollTop = 0;
+    }
+    lastProblemScroll.current = layerLocation.request;
+  }, [layerLocation, view.selectedId, view.textError, settingsOpen]);
   const settingsTitle = view.selectionCount > 1 ? `已选 ${view.selectionCount} 个图层` : panelKind === "erase" ? "消除笔" : panelKind === "adjust" ? "调色" : panelKind === "text" ? "文字" : "绘制";
   const locateProblem = view.problemObjectId && view.layers.some(layer => layer.id === view.problemObjectId) ? () => {
     const ids = (view.problemObjectIds ?? [view.problemObjectId!]).filter(id => view.layers.some(layer => layer.id === id));
@@ -186,7 +197,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
       </nav>
       <aside id="tool-settings" className="settings-panel" hidden={!settingsOpen} aria-label="工具属性">
         <div className="panel-heading"><span>{settingsTitle}</span><ActionButton floating className="icon-button" aria-label="收起工具属性" hint="收起工具属性，再次点击工具可展开" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => { changeSettings(false); viewportRef.current?.focus({ preventScroll: true }); }}><PanelLeftClose /></ActionButton></div>
-        <div className={`panel-content${panelKind === "draw" && view.selectionCount <= 1 ? " drawing-properties" : ""}`}>
+        <div ref={propertiesRef} className={`panel-content${panelKind === "draw" && view.selectionCount <= 1 ? " drawing-properties" : ""}`}>
           {view.tool === "pan" && view.selectionCount <= 1 && panelKind !== "erase" && <p className="field-help canvas-mode-hint">拖动画布平移；点击底部选择可继续编辑对象。</p>}
           {view.selectionCount > 1 ? <div className="multi-selection-properties">
             <p className="multi-selection-guide">{view.tool === "pan" ? "当前为平移模式。点击底部「选择」可继续编辑所选图层。" : "拖动选中内容可一起移动，拖动控制点可缩放或旋转。"}</p>

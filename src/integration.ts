@@ -52,6 +52,7 @@ export type ReplacementProgress = { stage: ReplacementStage; message?: string };
 export type EditorIntegration = {
   /** Optional metadata-only receiver. Host owns transport, deduplication and aggregation. */
   telemetry?: EraseTelemetryOptions;
+  /** Required business image. Missing/empty input never falls back to standalone preview defaults. */
   initialImage: Blob | string;
   context: ImageContext;
   validateTexts: (texts: AddedText[], context: ImageContext) => Promise<TextCheck>;

@@ -4,6 +4,7 @@ import { fetchImageBlob } from "../lib/imageLoading";
 import { checkImageFileSize, ImageFileSizeError } from "../lib/imageLimits";
 
 export const MAX_IMAGE_DIMENSION = 5000;
+export const MISSING_INITIAL_IMAGE_MESSAGE = "未获取到待编辑图片，请重新加载。";
 export class ImageSizeError extends Error {}
 export function checkImageDimensions(width: number, height: number) {
   if (!width || !height) throw new Error("图片尺寸无效，请重新选择");
@@ -45,6 +46,7 @@ export function toBlob(canvas: HTMLCanvasElement, type = "image/png", quality?: 
   return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片导出失败")), type, quality));
 }
 export async function defaultImage(preview = false, signal?: AbortSignal) {
+  if (!import.meta.env.DEV && import.meta.env.MODE !== "demo") throw new Error(MISSING_INITIAL_IMAGE_MESSAGE);
   if ((import.meta.env.DEV || import.meta.env.MODE === "demo") && preview) {
     // Reuse only the BEFORE image; the comparison module remains on demand.
     const { default: url } = await import("../../docs/demo/eraser/before-970x600.jpg");

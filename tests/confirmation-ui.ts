@@ -30,6 +30,40 @@ try {
   await settle(() => !!host.querySelector(".layer-card[data-purpose=content]"));
   const layerName = host.querySelector(".layer-card[data-purpose=content] strong")!.textContent;
   const start = async () => { submit().click(); await settle(() => !!dialog()?.open); };
+  const viewport = host.querySelector<HTMLElement>(".canvas-viewport")!;
+  const key = (type: string, value: string, target: HTMLElement = viewport) => {
+    const event = new KeyboardEvent(type, { key: value, code: value === " " ? "Space" : value, bubbles: true, cancelable: true });
+    target.dispatchEvent(event); return event;
+  };
+  button("选择").click(); await paint();
+  for (const kind of ["替换确认", "操作帮助"] as const) {
+    viewport.focus();
+    check(key("keydown", " ").defaultPrevented, `${kind}前可以按住空格临时平移`);
+    if (kind === "替换确认") await start();
+    else { button("操作帮助").click(); await paint(); }
+    const modal = host.querySelector<HTMLDialogElement>("dialog[open]")!;
+    let released = false;
+    modal.addEventListener("keyup", () => { released = true; }, { once: true });
+    const release = key("keyup", " ", modal);
+    key("keydown", "d", modal); key("keydown", "Delete", modal);
+    await paint();
+    check(released && !release.defaultPrevented && button("选择").getAttribute("aria-pressed") === "true" &&
+      host.querySelectorAll('.layer-card[data-purpose=content]').length === 1, `${kind}保留自身松键事件并阻止背景切换或删除`);
+    if (kind === "替换确认") modal.querySelector<HTMLButtonElement>(".secondary-button")!.click();
+    else button("关闭操作帮助").click();
+    await paint(); viewport.focus(); key("keydown", "d"); await paint();
+    check(button("绘制").getAttribute("aria-pressed") === "true" && button("选择").getAttribute("aria-pressed") === "false", `${kind}内松开空格后返回可立即按D绘制`);
+    key("keydown", "v"); await paint();
+    check(button("选择").getAttribute("aria-pressed") === "true", `${kind}返回后V恢复选择，临时平移不残留`);
+    check(key("keydown", " ").defaultPrevented, `${kind}返回后仍可再次临时平移`);
+    key("keyup", " "); key("keydown", "h"); await paint();
+    check(button("平移").getAttribute("aria-pressed") === "true", `${kind}返回后再次松开空格可正常切换平移模式`);
+    key("keydown", "v"); await paint();
+  }
+  button("撤销").click(); await settle(() => !host.querySelector('.layer-card[data-purpose=content]'));
+  button("重做").click(); await settle(() => !!host.querySelector('.layer-card[data-purpose=content]'));
+  check(validations === 0 && replacements === 0 && host.querySelector('.layer-card[data-purpose=content] strong')!.textContent === layerName,
+    "临时平移和弹窗取消不提交或新增历史，原文字仍可一步撤销和重做");
   await start();
   check(dialog().textContent!.includes("替换后无法恢复") && document.activeElement === dialog().querySelector(".secondary-button"), "替换确认说明不可恢复并默认聚焦返回编辑");
   check(validations === 0 && replacements === 0, "确认前不调用检测或保存服务");
