@@ -436,7 +436,10 @@ export class EditorController {
     try {
       if (this.disposed || token !== this.generation) return;
       const objects = surface.getObjects(); surface.remove(...objects);
-      this.canvas.discardActiveObject(); this.canvas.remove(...this.canvas.getObjects());
+      this.canvas.discardActiveObject();
+      // History retains serialized data/assets, not these detached instances. Release
+      // their caches locally; the initial comparison image is retained separately.
+      this.canvas.remove(...this.canvas.getObjects()).forEach(object => object.dispose());
       this.size = { ...snapshot.size }; this.restoreMasks(snapshot); this.source = snapshot.source ?? "online";
       if (this.automaticTextSize) this.textDefaults.fontSize = this.initialTextSize();
       this.adjustments = { ...snapshot.adjustments };
@@ -2050,7 +2053,11 @@ export class EditorController {
     this.finishNudge();
     if (document.hidden) this.releaseCompareShortcut();
   };
-  private beforeUnload = (event: BeforeUnloadEvent) => { if (!this.closed && !this.savedRecord && this.ready && (this.dirty || this.job || this.pending || this.submitting)) { event.preventDefault(); event.returnValue = ""; } };
+  private beforeUnload = (event: BeforeUnloadEvent) => {
+    if (!this.closed && !this.savedRecord && this.ready && (this.dirty || this.selection.draft || this.job || this.pending || this.submitting)) {
+      event.preventDefault(); event.returnValue = "";
+    }
+  };
   private finishEraseTelemetry(reason: "page_exit" | "unmount") {
     if (this.job && this.job.stage !== "sample") this.eraseRun?.cancel(this.job.stage, reason, this.job.id);
     this.eraseRun?.decision("no_decision", reason);

@@ -127,6 +127,32 @@ try {
     const pending = test.editor.requestClose(); test.dispose(); disposed = true; await pending;
     check(!test.state().closed, "销毁编辑器会取消尚未回答的确认，不继续执行");
   } finally { if (!disposed) test.dispose(); }
+  const exiting = createEditor();
+  const warnsOnPageExit = () => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event); return event.defaultPrevented;
+  };
+  try {
+    await exiting.editor.openImage(fixture, "退出保护", false);
+    exiting.editor.setTool("erase"); exiting.editor.setEraseMode("lasso");
+    check(!warnsOnPageExit(), "只切换工具和选区方式，页面退出不增加提醒");
+    exiting.click(100, 100);
+    check(exiting.state().unfinishedSelection && !exiting.state().hasMask && warnsOnPageExit(), "只有一个套索点时，页面退出也提醒未完成选区");
+    exiting.click(200, 100); exiting.click(200, 200);
+    check(warnsOnPageExit() && exiting.state().lassoPoints === 3 && !exiting.state().hasMask && !exiting.state().dirty, "未闭合套索触发提醒但不闭合、清空或改变文档");
+    const close = exiting.editor.requestClose(), prompt = exiting.state().confirmation!;
+    check(prompt.kind === "close", "未闭合套索仍使用原有关闭确认");
+    exiting.editor.answerConfirmation(prompt.id, false); await close;
+    check(!exiting.state().closed && exiting.state().lassoPoints === 3 && warnsOnPageExit(), "取消关闭保留套索，页面退出保护继续生效");
+    for (let i = 0; i < 3; i++) exiting.editor.undoLassoPoint();
+    check(!exiting.state().unfinishedSelection && !exiting.state().canUndo && !warnsOnPageExit(), "撤销全部套索点后无编辑，不残留页面退出提醒");
+    exiting.click(100, 100); exiting.click(200, 100); exiting.click(200, 200); exiting.click(100, 100);
+    check(exiting.state().hasMask && !exiting.state().unfinishedSelection && warnsOnPageExit(), "套索闭合后仍提醒保留已完成选区");
+    await exiting.editor.undo();
+    check(!exiting.state().hasMask && !warnsOnPageExit(), "撤销完成选区回到初始图片后不再提醒");
+    exiting.click(100, 100); await exiting.confirm(() => exiting.editor.requestClose());
+    check(exiting.state().closed && !warnsOnPageExit(), "确认放弃套索并关闭后不再阻止页面退出");
+  } finally { exiting.dispose(); }
   const closing = createEditor();
   try {
     await closing.editor.openImage(fixture, "无修改", false);
