@@ -1,11 +1,11 @@
-import { Canvas2dFilterBackend, FabricImage, getFilterBackend, setFilterBackend } from "fabric";
+import { Canvas2dFilterBackend, FabricImage, getFilterBackend, setFilterBackend, WebGLFilterBackend } from "fabric";
 import { adjustmentFilters, filterThumbnails, IMAGE_FILTERS } from "../src/editor/adjustments";
 import { DEFAULT_ADJUSTMENTS } from "../src/types";
 import type { DocumentSnapshot, ImageAdjustments } from "../src/types";
 import type { Assets } from "../src/editor/assets";
 import { renderDocument } from "../src/editor/render";
 import { editorConfig } from "../src/config";
-import { createEditor, picture, settle } from "./editing-tools";
+import { createEditor, frame, picture, settle } from "./editing-tools";
 
 const sample = async (blob: Blob, x = 32, y = 32) => {
   const bitmap = await createImageBitmap(blob), canvas = document.createElement("canvas");
@@ -15,7 +15,59 @@ const sample = async (blob: Blob, x = 32, y = 32) => {
 };
 const close = (a: number[], b: number[], tolerance = 2) => a.every((value, i) => Math.abs(value - b[i]) <= tolerance);
 
+async function checkSnapshotResources(check: (condition: boolean, message: string) => void) {
+  const backend = getFilterBackend();
+  check(backend instanceof WebGLFilterBackend, "历史资源回归实际启用图形加速");
+  const gpu = backend as WebGLFilterBackend, count = () => Object.keys(gpu.textureCache).length;
+  const initialCount = count(), source = await picture("#6080a0", 256, 192);
+  const current = createEditor(), other = createEditor();
+  const { editor, state, overlay, confirm } = current;
+  const probe = editor as unknown as { snapshot(): DocumentSnapshot; assets: Assets };
+  const exported = () => renderDocument(probe.snapshot(), probe.assets, "final", "png");
+  const comparePixel = async () => {
+    editor.setCompare(true); await frame();
+    const v = editor.canvas.viewportTransform;
+    const pixel = [...overlay.getContext("2d")!.getImageData(Math.round(100 * v[0] + v[4]), Math.round(100 * v[3] + v[5]), 1, 1).data];
+    editor.setCompare(false); return pixel;
+  };
+  try {
+    await other.editor.openImage(source, "另一编辑器", false);
+    other.editor.setAdjustments({ ...DEFAULT_ADJUSTMENTS, brightness: 10 }, true);
+    const otherImage = other.editor.canvas.getObjects()[0] as FabricImage;
+    const otherTexture = gpu.textureCache[otherImage.cacheKey];
+    await editor.openImage(source, "历史资源测试", false);
+    editor.setAdjustments({ ...DEFAULT_ADJUSTMENTS, brightness: 20 }, true);
+    const adjustedPixel = await sample(await exported());
+    check(count() === initialCount + 2, "两个编辑器各持有一份底图纹理，导出临时纹理已释放");
+    const counts: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      await editor.undo(); counts.push(count());
+      await editor.undo(true); counts.push(count());
+    }
+    check(counts.every((value, i) => value === initialCount + (i % 2 ? 2 : 1)),
+      `连续六次撤销重做仅保留当前底图纹理（相对初始缓存：${counts.map(value => value - initialCount).join(",")}）`);
+    check(close(await sample(await exported()), adjustedPixel) && close(await comparePixel(), [96, 128, 160, 255]),
+      "释放旧底图后重做成图正确，原图对比仍显示初始图片");
+    check(gpu.textureCache[otherImage.cacheKey] === otherTexture && gpu.gl.isTexture(otherTexture), "历史恢复不清空另一编辑器仍在使用的纹理");
+    const beforeFailure = editor.canvas.getObjects()[0];
+    await confirm(() => editor.uploadReplacement(new File(["invalid"], "invalid.jpg", { type: "image/jpeg" })));
+    check(editor.canvas.getObjects()[0] === beforeFailure && count() === initialCount + 2 && close(await sample(await exported()), adjustedPixel),
+      "上传校验失败保留当前底图、纹理及可导出的草稿");
+    await confirm(() => editor.resetOriginal());
+    check(count() === initialCount + 1 && close(await sample(await exported()), [96, 128, 160, 255]), "还原初始释放已调色底图纹理，原始成图正确");
+    await editor.undo();
+    check(count() === initialCount + 2 && state().adjustments.brightness === 20, "撤销还原重新生成当前纹理并恢复调色");
+    const upload = new File([await picture("#ffffff", 128, 96)], "replacement.jpg", { type: "image/jpeg" });
+    await confirm(() => editor.uploadReplacement(upload));
+    check(count() === initialCount + 1 && state().size.width === 128 && close(await sample(await exported()), [255, 255, 255, 255]) && close(await comparePixel(), [96, 128, 160, 255]),
+      "上传成功释放旧纹理，保留新图原尺寸成图及初始原图对比");
+    editor.setAdjustments({ ...DEFAULT_ADJUSTMENTS, brightness: -20 }, true);
+  } finally { current.dispose(); other.dispose(); await frame(); await frame(); }
+  check(count() === initialCount, "关闭两个编辑器后纹理缓存恢复初始数量");
+}
+
 export async function checkAdjustments(check: (condition: boolean, message: string) => void) {
+  await checkSnapshotResources(check);
   const backend = getFilterBackend(), source = document.createElement("canvas"); source.width = 24; source.height = 24;
   const ctx = source.getContext("2d")!;
   ctx.fillStyle = "#6080a0"; ctx.fillRect(0, 0, 24, 24); ctx.fillStyle = "#8090a0"; ctx.fillRect(12, 0, 12, 24);
