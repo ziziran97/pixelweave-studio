@@ -12,6 +12,10 @@ const paint = async () => { await frame(); await frame(); };
 const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const zoom = () => host.querySelector("output[aria-label='当前缩放比例']")!.textContent;
 const viewport = () => host.querySelector<HTMLElement>(".canvas-viewport")!;
+const modeKey = (value: string) => {
+  viewport().focus({ preventScroll: true });
+  viewport().dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
+};
 try {
   root.render(createElement(App));
   await settle(() => !!button("收起图层") && !button("收起图层").disabled && button("消除笔").getAttribute("aria-pressed") === "true");
@@ -21,12 +25,26 @@ try {
   check(!settingsHidden() && !host.querySelector(".tip-card") && button("消除笔").getAttribute("aria-pressed") === "true", "初始选中消除笔并展开属性，不显示常驻说明卡片");
   check([...host.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === "开始消除")!.disabled && host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.disabled && button("撤销").disabled, "默认消除模式无选区、不处理图片、不产生草稿修改");
   const eraseZoom = zoom();
+  check(button("消除笔").getAttribute("aria-keyshortcuts") === "E" && button("消除笔").title.includes("E"), "消除笔入口提供 E 快捷键及悬停提示");
   for (const mode of ["选择", "平移"]) {
     button(mode).click(); await paint();
     check(!!button("返回消除笔") && !settings().querySelector(".canvas-mode-hint") && !settings().querySelector(".erase-mode-grid") && settings().textContent!.includes("已保留的消除设置"), `消除切${mode}显示单一模式说明、返回入口和设置摘要`);
-    button("返回消除笔").click(); await paint();
+    check(button("返回消除笔").textContent!.includes("E") && button("返回消除笔").getAttribute("aria-keyshortcuts") === "E", "返回入口直接展示 E 快捷键");
+    if (mode === "平移") modeKey("e"); else button("返回消除笔").click();
+    await paint();
     check(!!settings().querySelector(".erase-mode-grid") && !settings().querySelector(".erase-paused") && viewport().clientWidth === initialWidth && zoom() === eraseZoom && button("撤销").disabled, `从${mode}返回消除保持面板尺寸、缩放及历史`);
   }
+  button("收起图层").click(); await paint();
+  for (const mode of ["erase", "pan"]) {
+    if (mode === "pan") modeKey("h");
+    button("收起工具属性").click(); await paint();
+    const currentZoom = zoom();
+    modeKey("e"); await paint();
+    check(!settingsHidden() && !!settings().querySelector(".erase-mode-grid") && button("消除笔").getAttribute("aria-pressed") === "true" &&
+      zoom() === currentZoom && button("展开图层").getAttribute("aria-expanded") === "false" && button("撤销").disabled,
+      `${mode} 状态下 E 展开消除属性栏，保留缩放、图层收起状态及历史`);
+  }
+  button("展开图层").click(); await paint();
   const eraseCanvas = host.querySelector<HTMLCanvasElement>(".upper-canvas")!;
   eraseCanvas.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })); await paint();
   check(!!settings().querySelector(".erase-mode-grid") && !settings().querySelector(".erase-paused"), "按住空格临时平移不切换消除面板");
@@ -151,6 +169,15 @@ try {
   check(held(), "无关按键松开不会结束 Enter 查看");
   key("keyup", "Enter"); await paint();
   check(!held(), "松开 Enter 恢复编辑");
+  check(compare.getAttribute("aria-keyshortcuts") === "C" && lowerCompare.getAttribute("aria-keyshortcuts") === "C", "两处原图按钮均标注 C");
+  modeKey("c"); await paint();
+  check(held() && lowerCompare.getAttribute("aria-pressed") === "true", "C 按下同步点亮两处原图按钮");
+  key("keydown", "Enter"); key("keyup", "Enter"); await paint();
+  check(held(), "C 持有时按钮的 Enter 不接管或提前结束原图查看");
+  window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 999, button: 0 })); await paint();
+  check(held(), "无关鼠标松手不结束 C 持有的对比");
+  viewport().dispatchEvent(new KeyboardEvent("keyup", { key: "c", code: "KeyC", bubbles: true })); await paint();
+  check(!held() && lowerCompare.getAttribute("aria-pressed") === "false", "松 C 后两处按钮恢复，按钮混合操作不残留");
   key("keydown", "Enter"); await paint(); window.dispatchEvent(new Event("blur")); await paint();
   check(!held(), "窗口失焦自动恢复编辑");
   compare.focus(); key("keydown", " "); await paint(); compare.blur(); await paint();
@@ -224,6 +251,17 @@ try {
   button("100% 查看").click(); await paint();
   check(zoom() === "100%" && !button("缩小").disabled && !button("放大").disabled, "100% 一键恢复实际比例，同时解除缩放极限禁用");
   button("适配画布").click(); await paint();
+  const canvasPixels = () => host.querySelector<HTMLCanvasElement>(".lower-canvas")!.toDataURL();
+  const fittedRatio = zoom(), fittedPixels = canvasPixels(), panels = [settingsHidden(), host.querySelector("#layers-panel")?.className];
+  button("100% 查看").click(); await paint(); modeKey("f"); await paint();
+  check(button("适配画布").getAttribute("aria-keyshortcuts") === "F" && button("适配画布").parentElement!.textContent!.includes("（F）") &&
+    zoom() === fittedRatio && canvasPixels() === fittedPixels && JSON.stringify([settingsHidden(), host.querySelector("#layers-panel")?.className]) === JSON.stringify(panels),
+    "F 回到与适配按钮相同的比例和实际画面，提示可见且面板状态保持");
   check(!button("适配画布").textContent && !!button("适配画布").querySelector("svg") && button("适配画布").parentElement!.textContent!.includes("完整显示图片并居中") && Number(zoom()!.replace("%", "")) <= 100 && button("撤销").disabled && button("消除笔").getAttribute("aria-pressed") === "true", "图标适配入口保留说明，查看操作不产生历史或切换工具");
+  button("100% 查看").click(); await paint(); const actualPixels = canvasPixels();
+  modeKey("f"); await paint(); modeKey("1"); await paint();
+  check(zoom() === "100%" && canvasPixels() === actualPixels && button("100% 查看").getAttribute("aria-keyshortcuts") === "1" &&
+    button("100% 查看").parentElement!.textContent!.includes("（1）") && JSON.stringify([settingsHidden(), host.querySelector("#layers-panel")?.className]) === JSON.stringify(panels),
+    "1 与 100% 按钮实际画面一致，提示同步且面板不变");
 } catch (error) { reports.push(`FAIL ${(error as Error).message}`); }
 finally { document.getElementById("results")!.textContent = reports.join("\n"); }

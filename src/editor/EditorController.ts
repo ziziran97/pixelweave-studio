@@ -74,6 +74,7 @@ export class EditorController {
   private confirmationResolve?: (accepted: boolean) => void;
   private replacementPreview?: { id: string; attempt: number; snapshot: DocumentSnapshot; image?: Blob };
   private compareOriginal = false;
+  private compareShortcutCode?: string;
   private editingViewport?: number[];
   private editingFitted?: boolean;
   private noticeValue = "正在载入图片…";
@@ -231,7 +232,7 @@ export class EditorController {
     window.addEventListener("keyup", this.keyUp, true);
     window.addEventListener("blur", this.windowBlur);
     window.addEventListener("focusin", this.windowFocusIn);
-    document.addEventListener("visibilitychange", this.finishNudge);
+    document.addEventListener("visibilitychange", this.visibilityChange);
     window.addEventListener("pointerdown", this.windowPointerDown, true);
     window.addEventListener("pointerup", this.windowPointerUp, true);
     window.addEventListener("pointercancel", this.windowPointerCancel, true);
@@ -404,7 +405,7 @@ export class EditorController {
     if (this.disposed || this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord) return;
     if (confirm && (this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("switch")) return;
     if (confirm) this.initialRequest?.abort();
-    this.cancelTask("image_change"); this.discardResult("image_change"); this.compareOriginal = false; this.canvas.beforeAdjustments = false; this.editingViewport = undefined; this.editingFitted = undefined;
+    this.cancelTask("image_change"); this.discardResult("image_change"); this.compareOriginal = false; this.compareShortcutCode = undefined; this.canvas.beforeAdjustments = false; this.editingViewport = undefined; this.editingFitted = undefined;
     this.finishText(); this.cancelDraft();
     const token = ++this.generation;
     this.busy = true; this.configure(); this.notice = "正在打开图片…"; this.emit();
@@ -492,6 +493,7 @@ export class EditorController {
   }
 
   setCompare(value: boolean) {
+    if (!value) this.compareShortcutCode = undefined;
     if (this.disposed || value === this.compareOriginal) return;
     if (value) {
       if (this.canvas.beforeAdjustments) return;
@@ -803,7 +805,7 @@ export class EditorController {
       // loadSnapshot prepares all objects offscreen; a failed upload leaves the draft intact.
       await this.loadSnapshot(next, token);
       if (this.disposed || token !== this.generation) return;
-      this.cancelTask("upload"); this.discardResult("upload"); this.cancelDraft(); this.compareOriginal = false; this.editingViewport = undefined; this.editingFitted = undefined;
+      this.cancelTask("upload"); this.discardResult("upload"); this.cancelDraft(); this.compareOriginal = false; this.compareShortcutCode = undefined; this.editingViewport = undefined; this.editingFitted = undefined;
       this.generation++; this.revision++; this.history.reset(this.snapshot());
       this.clipboard = undefined;
       this.imageSessionId = uid("image-session");
@@ -1916,22 +1918,43 @@ export class EditorController {
     }
     return true;
   }
-  private switchModeByKey(event: KeyboardEvent) {
-    const key = event.key.toLowerCase();
-    if ((key !== "v" && key !== "h" && key !== "d") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return false;
+  private canUseCanvasShortcut(event: KeyboardEvent) {
     const target = event.target instanceof Element ? event.target : undefined;
     const root = this.viewport.closest(".app-shell") ?? this.viewport;
     const control = target?.closest("input,textarea,select,[contenteditable],dialog,[role='dialog'],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']");
     const ownsKeys = control && control !== root && root.contains(control);
-    if (ownsKeys || this.locked ||
+    return !(ownsKeys || this.locked ||
       this.space || this.maskHidden || this.gestureActive || this.selection.draft || this.shapeDraft || this.preparingColorPick ||
-      this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing)) return false;
+      this.canvas.getActiveObjects().some(object => object instanceof Textbox && object.isEditing));
+  }
+  private canvasActionShortcut(event: KeyboardEvent) {
+    const command = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    const fit = key === "f" && !command;
+    const actual = key === "1" && !command;
+    const compare = key === "c" && !command;
+    const maskOperation = key === "x" && !command && this.tool === "erase" && (this.hasMask || this.operation === "subtract");
+    const erase = event.key === "Enter" && command && this.tool === "erase" && this.hasMask;
+    if ((!fit && !actual && !compare && !maskOperation && !erase) || event.altKey || event.shiftKey || event.repeat || !this.canUseCanvasShortcut(event)) return false;
     event.preventDefault(); event.stopPropagation();
-    if (key === "d") {
-      const alreadyDrawing = this.tool === this.lastDrawingTool;
+    if (fit) this.fit();
+    else if (actual) this.zoomTo(1);
+    else if (compare) {
+      this.setCompare(true);
+      if (this.compareOriginal) this.compareShortcutCode = event.code || "KeyC";
+    } else if (maskOperation) this.setMaskOperation(this.operation === "add" ? "subtract" : "add");
+    else void this.executeErase();
+    return true;
+  }
+  private switchModeByKey(event: KeyboardEvent) {
+    const key = event.key.toLowerCase();
+    if ((key !== "v" && key !== "h" && key !== "d" && key !== "e") || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat || !this.canUseCanvasShortcut(event)) return false;
+    event.preventDefault(); event.stopPropagation();
+    if (key === "d" || key === "e") {
+      const alreadyActive = this.tool === (key === "e" ? "erase" : this.lastDrawingTool);
       this.propertiesRequest++;
-      this.activateDrawing();
-      if (alreadyDrawing) this.emit();
+      if (key === "e") this.setTool("erase"); else this.activateDrawing();
+      if (alreadyActive) this.emit();
     } else this.setTool(key === "v" ? "select" : "pan");
     return true;
   }
@@ -1945,6 +1968,7 @@ export class EditorController {
     if (POSITION_KEYS[event.key]) { this.nudgeSelection(event); return; }
     const command = event.ctrlKey || event.metaKey;
     if (this.isInput(event.target)) return;
+    if (this.canvasActionShortcut(event)) return;
     if (this.switchModeByKey(event)) return;
     // Focused controls own activation keys; canvas shortcuts must not consume them.
     if (event.target instanceof Element && event.target.closest("button,a[href],summary,[role='button']") && (event.code === "Space" || event.key === "Enter")) return;
@@ -1978,21 +2002,24 @@ export class EditorController {
       }
       else void this.requestClose();
     }
-    if (event.key === "Enter" && this.tool === "erase" && this.selection.mode === "lasso") { event.preventDefault(); this.finishLasso(); }
+    if (event.key === "Enter" && !command && !event.altKey && !event.shiftKey && !event.repeat && this.tool === "erase" && this.selection.mode === "lasso") { event.preventDefault(); this.finishLasso(); }
   };
   private keyUp = (event: KeyboardEvent) => {
     // Always finish an owned gesture even when its release happens outside the editor.
+    if (this.compareShortcutCode && (event.code === this.compareShortcutCode || event.key.toLowerCase() === "c")) this.releaseCompareShortcut();
     if (this.nudgeKeys.delete(event.key) && !this.nudgeKeys.size) this.finishPropertyEdit();
     if (event.code === "Space" && this.space) {
       this.selection.endMove(); this.space = false; this.panning = undefined; this.configure();
     }
   };
   private windowFocusIn = (event: FocusEvent) => {
+    this.releaseCompareShortcut();
     this.keyboardFocus = this.isEditorTarget(event.target);
     this.finishNudge();
   };
   private windowPointerDown = (event: PointerEvent) => {
     this.keyboardFocus = this.isEditorTarget(event.target);
+    if (!this.keyboardFocus) this.releaseCompareShortcut();
     this.finishNudge();
     if (event.button === 0 && !this.gestureActive && event.target === this.canvas.upperCanvasEl) this.pointerId = event.pointerId;
   };
@@ -2009,11 +2036,19 @@ export class EditorController {
     this.panning = undefined; this.cancelDraft(); this.notice = this.tool === "erase" ? "操作被中断，未完成的选区已取消" : "操作被中断，未完成的绘制已取消"; this.configure(); this.emit();
   };
   private windowBlur = () => {
+    this.releaseCompareShortcut();
     this.finishPropertyEdit();
     this.gestureActive = false; this.pointerId = undefined;
     this.space = false; this.panning = undefined; this.maskHidden = false;
     if (this.selection.draft || this.shapeDraft) { this.cancelDraft(); this.notice = "窗口失去焦点，未完成的操作已取消"; }
     this.configure(); this.emit();
+  };
+  private releaseCompareShortcut() {
+    if (this.compareShortcutCode) this.setCompare(false);
+  }
+  private visibilityChange = () => {
+    this.finishNudge();
+    if (document.hidden) this.releaseCompareShortcut();
   };
   private beforeUnload = (event: BeforeUnloadEvent) => { if (!this.closed && !this.savedRecord && this.ready && (this.dirty || this.job || this.pending || this.submitting)) { event.preventDefault(); event.returnValue = ""; } };
   private finishEraseTelemetry(reason: "page_exit" | "unmount") {
@@ -2033,7 +2068,7 @@ export class EditorController {
     this.canvas.upperCanvasEl.removeEventListener("mousedown", this.captureColorDown, true);
     this.colorPick = undefined; this.disposed = true; this.generation++; this.job?.controller.abort(); this.observer.disconnect();
     window.removeEventListener("keydown", this.keyDown); window.removeEventListener("keyup", this.keyUp, true); window.removeEventListener("blur", this.windowBlur);
-    window.removeEventListener("focusin", this.windowFocusIn); document.removeEventListener("visibilitychange", this.finishNudge);
+    window.removeEventListener("focusin", this.windowFocusIn); document.removeEventListener("visibilitychange", this.visibilityChange);
     window.removeEventListener("pointerup", this.windowPointerUp, true); window.removeEventListener("pointercancel", this.windowPointerCancel, true);
     window.removeEventListener("pointerdown", this.windowPointerDown, true);
     window.removeEventListener("beforeunload", this.beforeUnload);

@@ -8,11 +8,11 @@ export function OriginalPreviewButton({ engine, active, disabled, below = false,
   engine: EditorController | null; active: boolean; disabled: boolean; below?: boolean; className?: string;
 }) {
   return <HoldPreviewButton active={active} disabled={disabled} below={below} className={className}
-    label="按住查看原图" change={value => engine?.setCompare(value)}><Columns2 /></HoldPreviewButton>;
+    label="按住查看原图" hint="按住查看原图（按住 C）" shortcut="C" change={value => engine?.setCompare(value)}><Columns2 /></HoldPreviewButton>;
 }
 
-export function HoldPreviewButton({ active, disabled, below = false, floating = false, className, label, change, children }: {
-  active: boolean; disabled: boolean; below?: boolean; floating?: boolean; className?: string; label: string; change: (value: boolean) => void; children: ReactNode;
+export function HoldPreviewButton({ active, disabled, below = false, floating = false, className, label, hint, shortcut, change, children }: {
+  active: boolean; disabled: boolean; below?: boolean; floating?: boolean; className?: string; label: string; hint?: string; shortcut?: string; change: (value: boolean) => void; children: ReactNode;
 }) {
   const changeRef = useRef(change); changeRef.current = change;
   const held = useRef<{ pointer: number } | { key: string } | null>(null);
@@ -47,7 +47,7 @@ export function HoldPreviewButton({ active, disabled, below = false, floating = 
   }, []);
   useEffect(() => { if (disabled) release(); }, [disabled]);
 
-  return <ActionButton below={below} floating={floating} className={className} hint={active ? "松开返回编辑" : label} aria-label={label} aria-pressed={active} disabled={disabled}
+  return <ActionButton below={below} floating={floating} className={className} hint={active ? "松开返回编辑" : hint ?? label} aria-label={label} aria-keyshortcuts={shortcut} aria-pressed={active} disabled={disabled}
     onPointerDown={event => {
       if (event.button !== 0 || held.current || active || disabled) return;
       event.preventDefault();

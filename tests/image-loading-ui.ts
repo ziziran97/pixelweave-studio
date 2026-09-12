@@ -24,6 +24,14 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 const integration = (initialImage: string | Blob): EditorIntegration => ({ initialImage, context: { taskId: "load-check", imageId: "test" },
   validateTexts: async () => ({ passed: true }), replace: async () => ({ status: "pending" }), confirmResult: async () => ({ status: "pending" }), onClose: () => {} });
 const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find(item => (item.getAttribute("aria-label") ?? item.textContent?.trim()) === label);
+const checkUnavailableZoom = (label: string) => {
+  const controls = ["缩小", "放大", "100% 查看", "适配画布"].map(name => button(name));
+  check(controls.every(control => control?.disabled) && host.querySelector('[aria-label="当前缩放比例"]')?.textContent === "—",
+    `${label}时缩放按钮禁用且不显示占位比例`);
+  const before = JSON.stringify(engine.canvas.viewportTransform);
+  controls.forEach(control => control?.click());
+  check(JSON.stringify(engine.canvas.viewportTransform) === before, `${label}时点击缩放按钮不改变空画布视野`);
+};
 let engine!: EditorController;
 const held = deferred<Response>();
 let requests = 0;
@@ -48,6 +56,7 @@ try {
     check(!host.querySelector(".document-size") && !host.querySelector(".layer-thumb img") &&
       !!button("文字")?.disabled && !!button("替换图片")?.disabled && !!button("上传本地图片")?.disabled,
       `宿主初始图片${label}时不以占位图进入编辑或替换`);
+    checkUnavailableZoom(`宿主初始图片${label}`);
     await engine.submitReplacement();
     check(fallbackRequests === 0 && saved === 0, "宿主缺图不回退页面参数或环境默认图，也不调用保存");
     button("重新加载图片")!.click(); await paint();
@@ -56,6 +65,9 @@ try {
     button("重新加载图片")!.click(); await settle(() => !button("消除笔")?.disabled); await paint();
     check(host.querySelector(".document-size")?.textContent === "1464 × 600 px" && !!button("撤销")?.disabled && fallbackRequests === 0,
       "宿主补充有效图片后重试打开真实图片，不新增历史或借用其他图片来源");
+    button("100% 查看")!.click(); await paint();
+    check(!button("100% 查看")?.disabled && !button("适配画布")?.disabled && host.querySelector('[aria-label="当前缩放比例"]')?.textContent === "100%",
+      "补图成功后恢复缩放按钮和真实比例，100% 查看正常生效");
   }
   window.history.replaceState(null, "", originalLocation); editorConfig.defaultImageUrl = originalDefaultImage;
   window.fetch = async (input, init) => {
@@ -68,11 +80,13 @@ try {
   root.render(createElement(App, { integration: integration("/__initial_load__") }));
   await settle(() => requests === 1); await paint();
   check(!host.querySelector(".document-size") && !!button("消除笔")?.disabled && host.textContent!.includes("正在载入图片"), "初始图片下载期间不显示预设尺寸，编辑入口保持禁用");
+  checkUnavailableZoom("初始图片下载期间");
   await engine.initialize();
   check(requests === 1, "加载期间重复初始化不重复下载");
   held.resolve(new Response(null, { status: 503 }));
   await settle(() => !!button("重新加载图片"));
   check(!host.querySelector(".document-size") && host.textContent!.includes("图片加载失败"), "初始加载失败显示原因和重试入口，不显示假尺寸");
+  checkUnavailableZoom("初始图片加载失败");
   button("重新加载图片")!.click();
   await settle(() => !button("消除笔")?.disabled); await paint();
   check(requests === 2 && host.querySelector(".document-size")?.textContent === "1464 × 600 px" && !button("重新加载图片"), "用户重试成功后显示真实尺寸，移除错误入口");

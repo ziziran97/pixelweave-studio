@@ -5,6 +5,7 @@ import { checkGrayMasks } from "./mask-png-checks";
 import { checkMaskCancellation } from "./mask-cancellation";
 import { checkPositioning } from "./positioning";
 import { checkModeShortcuts } from "./mode-shortcuts";
+import { checkActionShortcuts } from "./action-shortcuts";
 import { checkKeyboardScope } from "./keyboard-scope";
 import { checkAdjustments } from "./adjustments";
 import { Assets, toBlob } from "../src/editor/assets";
@@ -35,6 +36,7 @@ async function pixels(blob: Blob) {
 const assets = new Assets();
 try {
   await checkKeyboardScope(check);
+  await checkActionShortcuts(check);
   await checkEraseTelemetry(check);
   await checkEditingImprovements(check);
   const source = document.createElement("canvas"); source.width = 512; source.height = 256;

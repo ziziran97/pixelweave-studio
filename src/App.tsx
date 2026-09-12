@@ -143,7 +143,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
     if (canvasInteracting || locked || view.unfinishedSelection) return;
     if (settingsRequest.current === view.propertiesRequest) return;
     settingsRequest.current = view.propertiesRequest;
-    if ((view.selectionCount || ["draw", "rect", "circle"].includes(view.tool)) && !settingsOpen) {
+    if ((view.selectionCount || ["erase", "draw", "rect", "circle"].includes(view.tool)) && !settingsOpen) {
       engine?.zoomTo(view.zoom);
       setSettingsOpen(true);
     }
@@ -191,7 +191,7 @@ export default function App({ integration, preview = false }: { integration?: Ed
     <main className={`workspace${layersOpen ? "" : " layers-collapsed"}${settingsOpen ? "" : " settings-collapsed"}`}>
       <nav className="tool-rail" aria-label="编辑工具">
         {TOOLS.map(({ id, label, icon: Icon }) => <button key={id} className={`tool-button ${view.workspace === id ? "active" : ""}`} disabled={locked} aria-label={label} aria-controls="tool-settings" aria-pressed={view.workspace === id}
-          aria-keyshortcuts={id === "draw" ? "D" : undefined} title={id === "draw" ? "进入或继续绘制（D），沿用当前绘制类型" : undefined}
+          aria-keyshortcuts={id === "erase" ? "E" : id === "draw" ? "D" : undefined} title={id === "erase" ? "进入或返回消除笔（E），沿用当前消除设置" : id === "draw" ? "进入或继续绘制（D），沿用当前绘制类型" : undefined}
           onClick={() => { changeSettings(true); id === "draw" ? engine?.activateDrawing() : engine?.setTool(id); }}><Icon size={21} /><span>{label}</span></button>)}
         <div className="tool-help"><ActionButton floating hintPlacement="right" hintDelay={300} hintSuspended={helpOpen} dismissHintOnClick className="tool-button" aria-label="操作帮助" hint="操作说明与快捷键" disabled={locked || view.unfinishedSelection || canvasInteracting} onClick={() => setHelpOpen(true)}><CircleHelp size={21} /><span>帮助</span></ActionButton></div>
       </nav>
@@ -229,10 +229,10 @@ export default function App({ integration, preview = false }: { integration?: Ed
               <ActionButton hint="切换快捷键(H)，按住空格可临时平移" aria-label="平移" aria-keyshortcuts="H" aria-pressed={view.tool === "pan"} disabled={locked} onClick={() => engine?.setTool("pan")}><Hand /></ActionButton>
             </div>
             <div className="canvas-zoom-controls" role="group" aria-label="缩放查看">
-              <ActionButton hint={view.zoom <= 0.03 ? "已缩小至最小比例 3%" : "缩小"} aria-label="缩小" disabled={view.zoom <= 0.03} onClick={() => engine?.zoomTo(view.zoom / 1.2)}><ZoomOut /></ActionButton><output aria-label="当前缩放比例">{Math.round(view.zoom * 100)}%</output>
-              <ActionButton hint={view.zoom >= 4 ? "已放大至最大比例 400%" : "放大"} aria-label="放大" disabled={view.zoom >= 4} onClick={() => engine?.zoomTo(view.zoom * 1.2)}><ZoomIn /></ActionButton>
-              <ActionButton className="actual-size" hint="以 100% 比例查看图片细节" aria-label="100% 查看" onClick={() => engine?.zoomTo(1)}>100%</ActionButton>
-              <ActionButton hint="完整显示图片并居中" aria-label="适配画布" onClick={() => engine?.fit()}><ScanSquare /></ActionButton>
+              <ActionButton hint={view.zoom <= 0.03 ? "已缩小至最小比例 3%" : "缩小"} aria-label="缩小" disabled={!view.ready || view.zoom <= 0.03} onClick={() => engine?.zoomTo(view.zoom / 1.2)}><ZoomOut /></ActionButton><output aria-label="当前缩放比例">{view.ready ? `${Math.round(view.zoom * 100)}%` : "—"}</output>
+              <ActionButton hint={view.zoom >= 4 ? "已放大至最大比例 400%" : "放大"} aria-label="放大" disabled={!view.ready || view.zoom >= 4} onClick={() => engine?.zoomTo(view.zoom * 1.2)}><ZoomIn /></ActionButton>
+              <ActionButton className="actual-size" hint="以 100% 比例查看图片细节（1）" aria-label="100% 查看" aria-keyshortcuts="1" disabled={!view.ready} onClick={() => engine?.zoomTo(1)}>100%</ActionButton>
+              <ActionButton hint="完整显示图片并居中（F）" aria-label="适配画布" aria-keyshortcuts="F" disabled={!view.ready} onClick={() => engine?.fit()}><ScanSquare /></ActionButton>
             </div>
             <div className="canvas-view-controls" role="group" aria-label="初始对比">
               <OriginalPreviewButton engine={engine} active={view.compareOriginal} disabled={compareDisabled} />
