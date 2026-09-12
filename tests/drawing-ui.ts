@@ -254,12 +254,16 @@ try {
   check(!host.querySelector(".eraser-notice"), "普通操作反馈会自动收起");
   button("操作帮助").click(); await paint();
   const help = host.querySelector<HTMLDialogElement>(".shortcut-help-dialog")!;
-  check(help.textContent!.includes("绘制 / 选择 / 平移") && help.textContent!.includes("D／V／H") && help.querySelectorAll(".shortcut-list > div").length === 24,
-    "操作帮助同一行展示D／V／H及输入隔离说明，不增加行数");
+  check(help.textContent!.includes("消除笔 / 绘制 / 选择 / 平移") && help.textContent!.includes("E／D／V／H") && help.querySelectorAll(".shortcut-list > div").length === 30 &&
+    help.textContent!.includes("定位本次消除区域") && help.textContent!.includes("结果预览中 R") &&
+    help.textContent!.includes("F／1／C／X") && help.textContent!.includes("添加／减去选区") && help.textContent!.includes("查看初始原图") &&
+    help.textContent!.includes("开始消除（选区已完成）") && help.textContent!.includes("Ctrl+Enter") && help.textContent!.includes("完整显示图片并居中"),
+    "操作帮助展示模式、F 适配及 Ctrl+Enter 开始消除，保留输入隔离说明");
   const modeBeforeHelp = button("平移").getAttribute("aria-pressed");
   help.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true, cancelable: true })); await paint();
   help.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true, cancelable: true })); await paint();
-  check(button("平移").getAttribute("aria-pressed") === modeBeforeHelp && help.open, "帮助弹窗中的 H 不切换背景模式");
+  help.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true, cancelable: true })); await paint();
+  check(button("平移").getAttribute("aria-pressed") === modeBeforeHelp && help.open, "帮助弹窗中的 H／D／E 不切换背景模式");
   button("关闭操作帮助").click(); await paint();
   host.querySelector<HTMLButtonElement>(".top-right .primary-button")!.click(); await settle(() => !!host.querySelector(".confirmation-dialog[open]"));
   await settle(() => host.querySelector<HTMLButtonElement>(".confirmation-dialog .primary-button")?.disabled === false);

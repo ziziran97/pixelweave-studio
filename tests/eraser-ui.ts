@@ -36,6 +36,17 @@ try {
   check(editorTest.state().tool === "erase" && editorTest.state().eraseMode === "rect" && !editorTest.state().hasMask && !editorTest.state().task, "无选区返回恢复原方式，不新增选区或自动消除");
   editorTest.drag(20, 20, 100, 100); await panel();
   check(!button("按住隐藏选区").disabled, "完成选区后可按住隐藏选区");
+  const modeKey = (value: string) => editorTest.editor.canvas.upperCanvasEl.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
+  modeKey("x"); await panel();
+  check(host.querySelector(".mask-subtract")!.getAttribute("aria-pressed") === "true" && host.querySelector<HTMLButtonElement>(".mask-subtract")!.title.includes("X") &&
+    host.querySelector(".mask-add")!.getAttribute("aria-keyshortcuts") === "X", "X 切到减去时按钮同步高亮并显示快捷键提示");
+  modeKey("x"); await panel();
+  check(host.querySelector(".mask-add")!.getAttribute("aria-pressed") === "true", "再次 X 返回添加，面板即时同步");
+  const mainView = JSON.stringify(editorTest.editor.canvas.viewportTransform), mainMasks = editorTest.state().masks;
+  check(modeKey("r") && JSON.stringify(editorTest.editor.canvas.viewportTransform) === mainView && editorTest.state().masks === mainMasks,
+    "主画布 R 不拦截按键、不定位或修改消除选区");
+  const submit = host.querySelector<HTMLButtonElement>(".erase-submit")!;
+  check(submit.title.includes("Ctrl+Enter") && submit.title.includes("⌘+Enter") && submit.getAttribute("aria-keyshortcuts") === "Control+Enter Meta+Enter", "开始消除入口提示 Windows／Mac 快捷键");
   const peek = button("按住隐藏选区");
   peek.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
   check(editorTest.state().maskHidden, "面板查看按钮支持按住空格隐藏遮罩");
@@ -108,8 +119,15 @@ try {
         const beforePan = viewport(), beforeMasks = state().masks;
         space(editor.canvas.upperCanvasEl, "keydown"); drag(50, 40, 55, 43);
         check(viewport() !== beforePan && state().masks === beforeMasks, `${label}：请求前按住空格可正常临时平移，保留选区`);
-        await editor.executeErase();
+        const eraseTask = editor.executeErase();
+        const eraseKey = () => {
+          const event = new KeyboardEvent("keydown", { key: "e", bubbles: true, cancelable: true });
+          editor.canvas.upperCanvasEl.dispatchEvent(event); return event.defaultPrevented;
+        };
+        check(!eraseKey(), `${label}：请求准备期间 E 不切换工具`);
+        await eraseTask;
         const pending = state().pending!;
+        check(!eraseKey() && state().pending === pending, `${label}：等待采用的结果不被 E 绕过`);
         let finished: Promise<void> | undefined;
         const finish = (use: boolean) => {
           finished = (async () => {
@@ -121,6 +139,12 @@ try {
           accept: () => finish(true), discard: () => finish(false), retryPreview: () => {} }));
         await settle(() => !!host.querySelector<HTMLButtonElement>(".result-footer .primary-button") && !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
         const previewDialog = host.querySelector<HTMLDialogElement>("dialog")!;
+        const backgroundView = viewport(), backgroundMasks = state().masks;
+        for (const key of ["1", "f", "r", "c", "x"]) {
+          previewDialog.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); await paint();
+        }
+        check(viewport() === backgroundView && state().masks === backgroundMasks && !state().compareOriginal && state().pending === pending,
+          `${label}：结果弹窗 F／1／R 不改变背景画布和选区，C／X 不穿透或处理待采用结果`);
         previewDialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
         const cancel = new Event("cancel", { cancelable: true }); previewDialog.dispatchEvent(cancel);
         check(cancel.defaultPrevented && previewDialog.open && state().pending === pending && !state().confirmation,
@@ -135,6 +159,14 @@ try {
         const completedMasks = state().masks;
         space(editor.canvas.upperCanvasEl, "keydown"); drag(50, 40, 55, 43); space(editor.canvas.upperCanvasEl, "keyup");
         check(viewport() !== afterResult && state().masks === completedMasks, `${label}：再次按住空格仍可正常临时平移，松手保留选区`);
+        editor.canvas.upperCanvasEl.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true, cancelable: true }));
+        drag(50, 40, 58, 46); editor.zoomTo(state().zoom * 1.2);
+        const inspectedView = viewport(), history = (editor as unknown as { history: { index: number } }).history.index;
+        check(eraseKey() && state().tool === "erase" && state().eraseMode === "rect" && state().masks === completedMasks && viewport() === inspectedView &&
+          (editor as unknown as { history: { index: number } }).history.index === history && !state().pending && !state().task,
+          `${label}：H 平移放大查看后 E 返回原消除方式，保留选区、视野和历史`);
+        drag(90, 60, 110, 80);
+        check(state().masks === completedMasks + 1 && viewport() === inspectedView, `${label}：E 返回后可直接继续创建消除选区`);
       } finally { root.render(null); await paint(); dispose(); }
     }
   } finally { window.fetch = originalFetch; editorConfig.eraseApiUrl = configUrl; }
@@ -163,6 +195,10 @@ try {
   check(previewSignals.some(signal => signal.outcome === "shown" && signal.attempt === 0), "两张预览实际加载成功后通知埋点入口");
   const aligned = () => images()[0].style.cssText === images()[1].style.cssText;
   const pane = () => host.querySelector<HTMLDivElement>(".result-viewport")!;
+  const previewKey = (value: string, extra: KeyboardEventInit = {}, node: EventTarget = pane()) => {
+    const event = new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...extra });
+    node.dispatchEvent(event); return event.defaultPrevented;
+  };
   check(aligned() && parseFloat(images()[0].style.width) <= pane().clientWidth + 1, "初始左右适配显示且保持同一位置");
   const fittedWidth = images()[0].width;
   button("查看本次消除区域").click(); await paint();
@@ -170,10 +206,43 @@ try {
   check(images()[0].width > fittedWidth && aligned() && imageBounds.left + result.region.x * scale >= paneBounds.left &&
     imageBounds.top + result.region.y * scale >= paneBounds.top && imageBounds.left + (result.region.x + result.region.width) * scale <= paneBounds.right &&
     imageBounds.top + (result.region.y + result.region.height) * scale <= paneBounds.bottom, "消除区域定位到边角选区并保留周边，两侧同步且不改原图尺寸");
+  const regionStyle = images()[0].style.cssText, regionBefore = JSON.stringify(result.region);
   button("适配对比图片").click(); await paint();
   check(images()[0].width === fittedWidth && aligned(), "局部查看后仍可一键返回整图适配");
+  check(previewKey("r"), "结果预览 R 被弹窗自身处理"); await paint();
+  check(images()[0].style.cssText === regionStyle && aligned() && JSON.stringify(result.region) === regionBefore && !accepted && !discarded &&
+    button("查看本次消除区域").getAttribute("aria-keyshortcuts") === "R" && button("查看本次消除区域").parentElement!.textContent!.includes("（R）"),
+    "R 与按钮定位到同一区域及周边，左右同步、提示一致，不修改选区或采用／放弃结果");
+  previewKey("f"); await paint(); previewKey("1"); await paint(); previewKey("R"); await paint();
+  check(images()[0].style.cssText === regionStyle && aligned(), "F 回看整图、1 查看细节后，R 可再次准确定位消除区域");
+  check(previewKey("r"), "再次 R 仍可定位同一区域"); await paint();
+  check(images()[0].style.cssText === regionStyle && !accepted && !discarded, "重复单次 R 保持视野稳定且不处理结果");
+  previewKey("f"); await paint();
   button("100% 查看对比图片").click(); await paint();
   check(images()[0].width === size.width && aligned(), "100% 按图片原尺寸展示，两侧同步");
+  const actualStyle = images()[0].style.cssText;
+  check(previewKey("f"), "结果预览 F 被弹窗自身处理"); await paint();
+  check(images()[0].width === fittedWidth && aligned(), "结果预览 F 与适配按钮显示相同整图");
+  check(previewKey("1"), "结果预览 1 被弹窗自身处理"); await paint();
+  check(images()[0].style.cssText === actualStyle && aligned() && button("适配对比图片").getAttribute("aria-keyshortcuts") === "F" &&
+    button("100% 查看对比图片").getAttribute("aria-keyshortcuts") === "1" && !accepted && !discarded, "预览 1 与按钮显示相同细节，两侧同步且不采用或放弃结果");
+  for (const extra of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { repeat: true }, { isComposing: true }]) {
+    const before = images()[0].style.cssText;
+    check(["f", "1", "r"].every(key => !previewKey(key, extra)), "结果预览 F／1／R 保留组合键并忽略重复或组词"); await paint();
+    check(images()[0].style.cssText === before, "受限按键不改变结果查看位置");
+  }
+  for (const kind of ["input", "menu", "slider"]) {
+    const control = document.createElement(kind === "input" ? "input" : "div"); control.setAttribute("role", kind);
+    host.querySelector("dialog")!.append(control);
+    check(["f", "1", "r"].every(key => !previewKey(key, {}, control)), "结果预览输入或控件保留自己的按键"); control.remove();
+  }
+  const otherDialog = document.createElement("dialog"); document.body.append(otherDialog); otherDialog.showModal();
+  check(["f", "1", "r"].every(key => !previewKey(key)), "另一个弹窗打开时不操作下层结果预览"); otherDialog.close(); otherDialog.remove();
+  const capture = pane().setPointerCapture; pane().setPointerCapture = () => {};
+  pane().dispatchEvent(new PointerEvent("pointerdown", { pointerId: 41, button: 0, buttons: 1, bubbles: true }));
+  check(["f", "1", "r"].every(key => !previewKey(key)), "结果拖动尚未松手时 F／1／R 不打断查看手势");
+  pane().dispatchEvent(new PointerEvent("pointerup", { pointerId: 41, button: 0, bubbles: true })); pane().setPointerCapture = capture;
+  check(!previewKey("c") && !previewKey("x") && !previewKey("Enter", { ctrlKey: true }) && !accepted && !discarded, "结果预览不响应主画布 C／X，也不通过 Ctrl+Enter 采用结果");
   const initial = images()[0].style.transform;
   pane().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })); await paint();
   check(images()[0].style.transform !== initial && aligned(), "键盘平移同步两侧视图");
@@ -190,6 +259,7 @@ try {
   dialog.style.width = "650px"; await paint(); await paint();
   check(parseFloat(images()[0].style.width) <= pane().clientWidth + 1 && aligned(), "窗口尺寸变化后适配和左右同步保持");
   show(true); await paint();
+  check(["f", "1", "r"].every(key => !previewKey(key)), "采用结果过程中查看快捷键不生效");
   button("100% 查看对比图片").click();
   dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
   check(button("100% 查看对比图片").disabled && discarded === 0 && accepted === 0, "采用处理中禁止查看操作及 Esc 放弃");
@@ -197,6 +267,7 @@ try {
   check(!!host.querySelector("dialog [role=alert]") && host.querySelector(".result-footer .primary-button")!.textContent === "重试使用结果", "采用失败在弹窗内显示错误并提供重试入口");
   const oldImages = images(), sources = oldImages.map(image => image.src);
   images()[1].dispatchEvent(new Event("error")); await paint();
+  check(["f", "1", "r"].every(key => !previewKey(key)), "预览加载失败时不通过快捷键调整未就绪图片");
   check(previewSignals.at(-1)?.outcome === "failed", "预览图片加载错误通知失败，不冒充算法失败");
   check(host.textContent!.includes("消除结果已保留") && host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled, "预览失败保留结果并禁止采用未加载图片");
   host.querySelector<HTMLButtonElement>(".result-recovery button")!.click(); await paint();
@@ -217,6 +288,7 @@ try {
   check(discarded === 1 && !host.querySelector("dialog"), "只有点击放弃结果才关闭弹窗并放弃结果");
   const recovery = { beforeUrl: "", afterUrl: "", previewError: "对比图片生成失败，消除结果已保留。可重新生成预览，无需重新消除。" };
   show(false, "generation", undefined, recovery); await paint();
+  check(!previewKey("r"), "预览尚未生成时 R 不定位未就绪图片");
   check(!images().length && host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled && host.textContent!.includes("无需重新消除"), "预览生成失败不请求空图片地址，并禁止采用未生成的预览");
   host.querySelector<HTMLButtonElement>(".result-recovery button")!.click(); await paint();
   check(regenerated === 1 && accepted === 1 && discarded === 1, "重新生成预览仅触发恢复，不采用或放弃结果");
@@ -227,7 +299,9 @@ try {
   await settle(() => !host.querySelector<HTMLButtonElement>(".result-footer .primary-button")!.disabled);
   check(aligned() && pane().clientWidth > 0 && !host.querySelector(".result-recovery"), "重新生成成功后恢复图片加载、同步查看与采用");
   show(false, "generation", undefined, { region: undefined }); await paint();
-  check(button("查看本次消除区域").disabled, "缺少区域信息时不猜测定位位置");
+  const noRegionStyle = images()[0].style.cssText;
+  check(button("查看本次消除区域").disabled && !previewKey("r"), "缺少区域信息时按钮与 R 均不可用，不猜测定位位置"); await paint();
+  check(images()[0].style.cssText === noRegionStyle && accepted === 1 && discarded === 1, "缺少区域时 R 保持查看位置和结果决策不变");
   root.render(null); await paint();
   const preview = document.getElementById("preview")!; preview.hidden = false;
   preview.onclick = () => show(false, `preview-${Date.now()}`);

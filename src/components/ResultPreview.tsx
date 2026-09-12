@@ -126,7 +126,17 @@ export function ResultPreview({ result, size, busy, suspended = false, replaceme
   }, [bounds, size.width, size.height, ready, busy]);
 
   return <dialog ref={dialog} className="result-dialog" aria-labelledby="result-title"
-    onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}
+    onKeyDown={event => {
+      event.stopPropagation();
+      const key = event.key.toLowerCase();
+      if ((key !== "f" && key !== "1" && key !== "r") || (key === "r" && !result.region) || event.defaultPrevented || event.nativeEvent.isComposing || event.repeat ||
+        event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || busy || !ready || suspended || drag.current) return;
+      if (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable],[role='menu'],[role='listbox'],[role='combobox'],[role='slider']")) return;
+      if ([...document.querySelectorAll("dialog[open],[role='dialog'][aria-modal='true']")]
+        .some(other => other !== dialog.current && other.getClientRects().length > 0 && !other.contains(dialog.current))) return;
+      event.preventDefault();
+      if (key === "f") fit(); else if (key === "r") focusRegion(); else changeZoom("actual");
+    }} onKeyUp={event => event.stopPropagation()}
     onCancel={event => { event.preventDefault(); if (example) dismissExample(); }}>
     <h2 id="result-title">检查消除结果</h2>
     <p>{example ? "固定样例 · 效果示意，未调用消除服务。" : illustrative ? "固定样图流程演示 · 未调用消除服务。使用后更新当前编辑草稿，未保存到任务。"
@@ -139,10 +149,10 @@ export function ResultPreview({ result, size, busy, suspended = false, replaceme
         <ActionButton aria-label="缩小对比图片" hint="缩小" disabled={busy || !ready || zoom <= minZoom} onClick={() => changeZoom(1 / 1.25)}><ZoomOut /></ActionButton>
         <output aria-label="对比缩放比例">{ready ? `${Math.round(zoom * 100)}%` : "—"}</output>
         <ActionButton aria-label="放大对比图片" hint="放大" disabled={busy || !ready || zoom >= maxZoom} onClick={() => changeZoom(1.25)}><ZoomIn /></ActionButton>
-        <ActionButton className="actual-size" disabled={busy || !ready} aria-label="100% 查看对比图片" hint="以 100% 比例查看图片细节" onClick={() => changeZoom("actual")}>100%</ActionButton>
-        <ActionButton disabled={busy || !ready} aria-label="适配对比图片" hint="完整显示图片并居中" onClick={fit}><ScanSquare /></ActionButton>
+        <ActionButton className="actual-size" disabled={busy || !ready} aria-label="100% 查看对比图片" aria-keyshortcuts="1" hint="以 100% 比例查看图片细节（1）" onClick={() => changeZoom("actual")}>100%</ActionButton>
+        <ActionButton disabled={busy || !ready} aria-label="适配对比图片" aria-keyshortcuts="F" hint="完整显示图片并居中（F）" onClick={fit}><ScanSquare /></ActionButton>
         <span className="result-region-divider" aria-hidden="true" />
-        <ActionButton disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" hint={example ? "定位示例中标签的移除区域及周边，左右同步" : "定位本轮选区及周边，左右同步"} onClick={focusRegion}><Crosshair />消除区域</ActionButton>
+        <ActionButton disabled={busy || !ready || !result.region} aria-label="查看本次消除区域" aria-keyshortcuts="R" hint={example ? "定位示例中标签的移除区域及周边，左右同步（R）" : "定位本轮选区及周边，左右同步（R）"} onClick={focusRegion}><Crosshair />消除区域</ActionButton>
       </div>
     </div>
     <div className="result-images">{[result.beforeUrl, result.afterUrl].map((url, index) => <figure key={index}>

@@ -29,7 +29,7 @@ export function EraserPanel({ view, engine, locked, execute }: {
   if (view.tool === "select" || view.tool === "pan") return <fieldset disabled={locked} className="erase-paused">
     <p className="text-style-scope">{view.tool === "pan" ? "正在平移画布" : "正在选择对象"}</p>
     <p className="field-help">{view.tool === "pan" ? "拖动画布查看图片。" : "点击或框选新增文字、图形和笔画。"}</p>
-    <button type="button" className="secondary-button full" aria-label="返回消除笔" onClick={() => engine?.setTool("erase")}><Eraser size={16} />返回消除笔</button>
+    <button type="button" className="secondary-button full" aria-label="返回消除笔" aria-keyshortcuts="E" title="返回消除笔（E）" onClick={() => engine?.setTool("erase")}><Eraser size={16} />返回消除笔（E）</button>
     <div className="erase-saved-settings">
       <p className="text-style-scope">已保留的消除设置</p>
       <dl>
@@ -55,7 +55,7 @@ export function EraserPanel({ view, engine, locked, execute }: {
       <p className="erase-mode-hint" role="status">{hint}</p>
       {!!view.lassoPoints && <button title="退格或 Ctrl+Z 撤销上一点" onClick={() => engine?.undoLassoPoint()}><Undo2 size={13} />撤销上一点</button>}
     </div>
-    <div className="toggle-grid"><button className={`mask-add ${view.maskOperation === "add" ? "selected" : ""}`} aria-pressed={view.maskOperation === "add"} onClick={() => engine?.setMaskOperation("add")}>＋ 添加选区</button><button disabled={!view.hasMask} className={`mask-subtract ${view.maskOperation === "subtract" ? "selected" : ""}`} aria-pressed={view.maskOperation === "subtract"} onClick={() => engine?.setMaskOperation("subtract")}>－ 减去选区</button></div>
+    <div className="toggle-grid"><button className={`mask-add ${view.maskOperation === "add" ? "selected" : ""}`} title="添加需要消除的区域；按 X 切换添加／减去" aria-keyshortcuts="X" aria-pressed={view.maskOperation === "add"} onClick={() => engine?.setMaskOperation("add")}>＋ 添加选区</button><button disabled={!view.hasMask} className={`mask-subtract ${view.maskOperation === "subtract" ? "selected" : ""}`} title="减去无需消除的区域；按 X 切换添加／减去" aria-keyshortcuts="X" aria-pressed={view.maskOperation === "subtract"} onClick={() => engine?.setMaskOperation("subtract")}>－ 减去选区</button></div>
     {view.maskOperation === "subtract" && <p className="erase-subtract-hint">从已有选区中减去无需消除的区域</p>}
     {view.eraseMode === "brush" && <BrushSizeControl engine={engine ?? undefined} value={view.brushSize} disabled={locked || view.unfinishedSelection} change={value => engine?.setBrushSize(value)} />}
     <button type="button" className="mask-peek" disabled={locked || !view.hasMask || view.unfinishedSelection}
@@ -69,7 +69,7 @@ export function EraserPanel({ view, engine, locked, execute }: {
     </button>
     <div className="erase-actions">
       <button className="clear-selection" disabled={!view.masks && !view.unfinishedSelection} onClick={() => engine?.resetEraseSelection()}>清空选区</button>
-      <button className="primary-button erase-submit" title={submitHint || "消除所选区域，处理后可对比并选择是否使用"} aria-describedby={showSubmitHint ? "erase-submit-hint" : undefined} disabled={!view.hasMask || view.unfinishedSelection} onClick={execute}><Eraser size={16} />{view.task ? "正在消除…" : "开始消除"}</button>
+      <button className="primary-button erase-submit" title={submitHint || "开始消除（Ctrl+Enter，Mac 用 ⌘+Enter），处理后可对比并选择是否使用"} aria-keyshortcuts="Control+Enter Meta+Enter" aria-describedby={showSubmitHint ? "erase-submit-hint" : undefined} disabled={!view.hasMask || view.unfinishedSelection} onClick={execute}><Eraser size={16} />{view.task ? "正在消除…" : "开始消除"}</button>
     </div>
     {showSubmitHint && <p id="erase-submit-hint" className="erase-submit-hint">{submitHint}</p>}
     {view.tool === "erase" && !view.compareOriginal && view.layers.some(layer => layer.purpose === "content") && <p className="erase-base-hint">当前仅显示底图，新增文字和绘制内容已保留。</p>}

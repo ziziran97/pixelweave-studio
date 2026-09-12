@@ -237,8 +237,10 @@ try {
   host.querySelector<HTMLButtonElement>(`[data-layer-id="${oldId}"] .layer-select`)!.click(); await paint();
   button("操作帮助").click(); await paint();
   const helpText = host.querySelector(".shortcut-help-dialog")!.textContent!;
+  const helpLabels = [...host.querySelectorAll(".shortcut-list dt")].map(item => item.textContent);
   check(helpText.includes("全选可编辑图层") && helpText.includes("Ctrl+A") && helpText.includes("Ctrl+Shift+↓") &&
-    host.querySelectorAll(".shortcut-list > div").length === 24, "帮助以全选一行及排序两行展示新增快捷键");
+    ["全选可编辑图层", "上移 / 下移一层", "置顶 / 置底"].every(label => helpLabels.filter(item => item === label).length === 1),
+    "帮助以全选一行及排序两行展示新增快捷键");
   button("关闭操作帮助").click(); await paint();
   await menuKey(row());
   command("锁定图层").click(); await paint();
