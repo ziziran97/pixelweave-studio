@@ -1,5 +1,5 @@
 import { createEditor, picture, settle } from "./editing-tools";
-import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } from "../src/integration";
+import type { AddedText, EditorIntegration, ImageContext, ReplaceOutcome, ReplacementInput } from "../src/integration";
 import { Textbox } from "fabric";
 
 export async function checkReplacementFlow(check: (condition: boolean, message: string) => void) {
@@ -74,4 +74,90 @@ export async function checkReplacementFlow(check: (condition: boolean, message: 
     await local.confirm(() => local.editor.submitReplacement());
     check(local.state().notice.includes("尚未接入") && !local.state().saved && local.state().canSubmit, "未接入服务时明确提示并保留草稿，不模拟成功");
   } finally { local.dispose(); }
+  await checkRuntimeReceipts(check, initialImage);
+  await checkSessionContext(check, initialImage);
+}
+
+async function checkRuntimeReceipts(check: (condition: boolean, message: string) => void, initialImage: Blob) {
+  let outcome: unknown = { status: "succeeded", recordId: "   " }, replacements = 0, closes = 0;
+  let submitted!: ReplacementInput;
+  const queries: string[] = [];
+  const test = createEditor({ initialImage, context: { taskId: "receipt-task", imageId: "receipt-image" },
+    validateTexts: async () => ({ passed: true }),
+    replace: async input => { replacements++; submitted = input; return outcome as ReplaceOutcome; },
+    confirmResult: async id => { queries.push(id); return outcome as ReplaceOutcome; }, onClose: () => { closes++; } });
+  try {
+    await test.editor.initialize(); test.editor.setTool("rect"); test.drag(20, 20, 100, 90);
+    const draft = JSON.stringify(test.editor.canvas.toJSON());
+    await test.confirm(() => test.editor.submitReplacement());
+    check(!test.state().saved && !test.state().closed && test.state().needsConfirmation && closes === 0,
+      "纯空格保存记录不被当成成功，保留原提交等待查询");
+    for (const recordId of [{ invalid: true }, 123, "", null]) {
+      outcome = { status: "succeeded", recordId }; await test.editor.confirmReplacement();
+      check(test.state().needsConfirmation && !test.state().saved && !test.state().canSubmit && closes === 0 &&
+        queries.at(-1) === submitted.submissionId && replacements === 1,
+        `查询回执中的无效记录 ${JSON.stringify(recordId)} 不关闭、不解锁、不重新保存`);
+    }
+    outcome = { status: "failed", message: {}, objectId: {} }; await test.editor.confirmReplacement();
+    check(!test.state().needsConfirmation && test.state().canSubmit && test.state().notice.includes("编辑内容已保留") &&
+      JSON.stringify(test.editor.canvas.toJSON()) === draft,
+      "明确失败但提示字段异常时使用兜底文案，原草稿完整恢复");
+    outcome = { status: "succeeded", recordId: " saved-record " };
+    await test.confirm(() => test.editor.submitReplacement());
+    check(test.state().saved && test.state().closed && closes === 1 && replacements === 2,
+      "有效成功回执才进入审核回流，明确失败后可以发起新提交");
+  } finally { test.dispose(); }
+}
+
+async function checkSessionContext(check: (condition: boolean, message: string) => void, initialImage: Blob) {
+  const original: ImageContext = { taskId: "context-task-a", imageId: "context-image-a", baseRecordId: "base-a", targetVersion: "version-a" };
+  const context = { ...original }, seenTexts: ImageContext[] = [], queries: { id: string; context: ImageContext }[] = [];
+  let submitted!: ReplacementInput, outcome: ReplaceOutcome = { status: "pending" };
+  const adapter: EditorIntegration = { initialImage, context,
+    validateTexts: async (_texts, input) => { seenTexts.push({ ...input }); input.imageId = "mutated-validation"; input.targetVersion = "mutated"; return { passed: true }; },
+    replace: async input => {
+      submitted = { ...input, context: { ...input.context }, texts: input.texts.map(text => ({ ...text })) };
+      input.submissionId = "mutated-submission"; input.context.imageId = "mutated-replacement"; input.context.targetVersion = "mutated";
+      input.texts.length = 0;
+      return outcome;
+    },
+    confirmResult: async (id, input) => { queries.push({ id, context: { ...input } }); input.imageId = "mutated-query"; input.targetVersion = "mutated"; return outcome; },
+    onClose: () => {} };
+  const test = createEditor(adapter);
+  const matchesOriginal = (input: ImageContext, uploaded = false) => input.taskId === original.taskId && input.imageId === original.imageId &&
+    input.targetVersion === original.targetVersion && input.baseRecordId === (uploaded ? undefined : original.baseRecordId);
+  try {
+    const opening = test.editor.initialize();
+    Object.assign(context, { taskId: "host-new-task", imageId: "host-new-image", baseRecordId: "host-new-base", targetVersion: "host-new-version" });
+    await opening;
+    test.editor.setTool("text"); await test.editor.addText();
+    await test.confirm(() => test.editor.submitReplacement());
+    check(matchesOriginal(seenTexts[0]) && matchesOriginal(submitted.context) && submitted.texts.length === 1,
+      "初始图片加载期间宿主更新上下文，不改变本次文案检测和替换目标及版本");
+    const id = submitted.submissionId;
+    await test.editor.confirmReplacement(); outcome = { status: "failed", message: "测试明确失败，允许继续编辑" };
+    await test.editor.confirmReplacement();
+    check(queries.length === 2 && queries.every(query => query.id === id && matchesOriginal(query.context)),
+      "宿主修改文案、替换和查询入参副本，不污染原提交标识或后续查询上下文");
+    await test.confirm(() => test.editor.uploadReplacement(new File([initialImage], "new.jpg")));
+    await test.confirm(() => test.editor.submitReplacement());
+    check(submitted.source === "upload" && matchesOriginal(submitted.context, true),
+      "上传清除实际系统底图关联，但保留打开时的任务、图片和目标生效版本");
+    await test.confirm(() => test.editor.resetOriginal());
+    check(!test.state().canSubmit, "还原初始没有新修改时仍不能替换");
+    await test.editor.undo(); await test.confirm(() => test.editor.submitReplacement());
+    check(submitted.source === "upload" && matchesOriginal(submitted.context, true),
+      "撤销还原恢复上传来源，目标生效版本保持不变");
+    await test.confirm(() => test.editor.resetOriginal());
+    test.editor.setTool("rect"); test.drag(20, 20, 100, 90); await test.confirm(() => test.editor.submitReplacement());
+    check(submitted.source === "online" && matchesOriginal(submitted.context),
+      "还原后继续编辑使用打开时系统底图，不能读入宿主后来修改的记录");
+  } finally { test.dispose(); }
+  const next = createEditor(adapter);
+  try {
+    await next.editor.initialize(); next.editor.setTool("rect"); next.drag(20, 20, 100, 90);
+    await next.confirm(() => next.editor.submitReplacement());
+    check(submitted.context.imageId === context.imageId && submitted.context.targetVersion === context.targetVersion,
+      "真正重新打开编辑会话时使用宿主最新目标及版本，不复用旧会话");
+  } finally { next.dispose(); }
 }

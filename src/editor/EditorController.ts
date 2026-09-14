@@ -23,8 +23,8 @@ import { ContentTextbox } from "./ContentTextbox";
 import { ContentBrush } from "./ContentBrush";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { applyShapeProperties, shapeProperties, rectRadiusLimit, syncRectRadius, DEFAULT_SHAPE } from "./shape";
-import type { AddedText, EditorIntegration, ReplaceOutcome, ReplacementInput } from "../integration";
-import { textCheckIssues } from "../integration";
+import type { AddedText, EditorIntegration, ImageContext, ReplacementInput } from "../integration";
+import { readReplacementOutcome, textCheckIssues } from "../integration";
 import { validatePreviewTexts } from "./previewTextValidation";
 import { previewReplacement } from "./previewReplacement";
 import { previewErase } from "./previewErase";
@@ -111,6 +111,7 @@ export class EditorController {
   private textInputEvents?: AbortController;
   private fontRetry?: { generation: number; selectedId?: string; message: string; run: () => Promise<void> };
   private source: "online" | "upload" = "online";
+  private sessionContext?: ImageContext;
   private nameCounts: Record<string, number> = {};
   private colorPick?: { canvas: HTMLCanvasElement; apply: (color: string) => void; cancel?: () => void };
   private colorEdit?: ColorEdit;
@@ -366,13 +367,14 @@ export class EditorController {
     try {
       // A host must supply its own image; standalone defaults must never hide a missing business image.
       const source = this.integration ? this.integration.initialImage : new URLSearchParams(location.search).get("image")?.trim() || editorConfig.defaultImageUrl;
+      const context = this.integration ? { ...this.integration.context } : undefined;
       const url = typeof source === "string" ? source.trim() : source;
       if (this.integration && !(url instanceof Blob ? url.size > 0 : typeof url === "string" && url.length > 0)) {
         throw new Error(MISSING_INITIAL_IMAGE_MESSAGE);
       }
       const blob = url instanceof Blob ? url : url ? await fetchImageBlob(url, { signal: request.signal }) : await defaultImage(this.preview && !this.integration, request.signal);
       if (!this.disposed && !this.closed && !request.signal.aborted && token === this.generation) {
-        await this.openImage(blob, "当前图片", false);
+        await this.openImage(blob, "当前图片", false, context);
         if (!this.ready) this.initialLoadFailed = true;
         const baseId = this.original?.objects.find(object => object.editorPurpose === "base")?.editorAssetId;
         if (previewErase && this.preview && !this.integration && !url && !this.disposed && baseId && this.assets.get(baseId).blob === blob) {
@@ -401,8 +403,10 @@ export class EditorController {
       editorRole: "image", editorPurpose: "base", editorLocked: true, editorAssetId: asset.id } as ObjectData;
   }
 
-  async openImage(blob: Blob, name: string, confirm = true) {
+  async openImage(blob: Blob, name: string, confirm = true, context = this.integration?.context) {
     if (this.disposed || this.confirmation || this.busy || this.colorEdit || this.colorPick || this.submitting || this.savedRecord) return;
+    // Capture with the image before any download/confirmation/decode can yield to host updates.
+    const openingContext = context ? { ...context } : undefined;
     if (confirm && (this.dirty || this.job || this.pending || this.gestureActive || this.selection.draft || this.shapeDraft) && !await this.confirmAction("switch")) return;
     if (confirm) this.initialRequest?.abort();
     this.cancelTask("image_change"); this.discardResult("image_change"); this.compareOriginal = false; this.compareShortcutCode = undefined; this.canvas.beforeAdjustments = false; this.editingViewport = undefined; this.editingFitted = undefined;
@@ -418,6 +422,7 @@ export class EditorController {
       await this.loadSnapshot(snapshot, token);
       if (this.disposed || token !== this.generation) return;
       this.original = deepCopy(snapshot); this.history.reset(this.snapshot()); this.original = deepCopy(this.history.current);
+      this.sessionContext = openingContext;
       const base = this.canvas.getObjects().find(object => object.editorPurpose === "base");
       this.originalElement = base instanceof FabricImage ? base.getElement() as HTMLImageElement : undefined;
       this.documentId = uid("document"); this.imageSessionId = uid("image-session"); this.revision = 0; this.ready = true; this.closed = false; this.source = "online"; this.nameCounts = {};
@@ -848,6 +853,7 @@ export class EditorController {
     if (!this.contentDirty) { this.notice = "空文字已删除，当前图片无需替换"; this.emit(); return; }
     if (!this.integration && !(this.preview && validatePreviewTexts)) { this.notice = "替换服务尚未接入，当前草稿已保留"; this.noticePresentation = "persistent"; this.emit(); return; }
     const generation = this.generation, revision = this.revision, texts = this.addedTexts(), run = ++this.submissionRun;
+    const context = { ...this.sessionContext! };
     this.submitting = true; this.submissionStage = texts.length ? "正在检查新增文案…" : "正在检查成图…";
     this.submissionProgress = { step: texts.length ? "texts" : "image", status: "processing", textsSkipped: !texts.length, waitStartedAt: Date.now() };
     if (!this.integration && this.preview && previewReplacement && this.previewScenario !== "texts") {
@@ -862,7 +868,7 @@ export class EditorController {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         const checked = await Promise.race([
           Promise.resolve().then(() => this.integration
-            ? this.integration.validateTexts(texts.map(item => ({ ...item })), { ...this.integration.context })
+            ? this.integration.validateTexts(texts.map(item => ({ ...item })), { ...context })
             : validatePreviewTexts!(texts))
             .catch(() => { throw new Error("文案检测失败，请再次点击「替换图片」重试"); }),
           new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("文案检测超时，请再次点击「替换图片」重试")), 15000); }),
@@ -881,7 +887,7 @@ export class EditorController {
           return;
         }
       }
-      if (!this.integration && !this.previewSubmission) {
+      if (validatePreviewTexts && !this.integration && !this.previewSubmission) {
         this.submissionRun++; this.submitting = false; this.submissionStage = ""; this.submissionProgress = undefined;
         this.notice = texts.length ? "文案检测通过。当前为演示，未保存到任务。" : "当前为演示，未保存到任务。";
         this.noticePresentation = "persistent"; this.configure(); this.emit(); return;
@@ -901,15 +907,16 @@ export class EditorController {
         return;
       }
       if (!this.integration) return;
-      this.submission = { submissionId: uid("replacement"), context: { ...this.integration.context,
-        baseRecordId: this.source === "online" ? this.integration.context.baseRecordId : undefined },
+      this.submission = { submissionId: uid("replacement"), context: { ...context,
+        baseRecordId: this.source === "online" ? context.baseRecordId : undefined },
         image: checked.jpeg, ...this.size, source: this.source, texts };
       this.submissionStage = "正在等待图片检测与替换结果…"; this.emit();
     } catch (error) { if (current()) this.finishSubmissionFailure((error as Error).message || "提交前检查失败，请重试"); return; }
     // After dispatch, transport errors are unknown outcomes, never definitive failures.
     let progressOpen = true;
     try {
-      const result = await this.integration.replace(this.submission!, message => {
+      const input = this.submission!;
+      const result = await this.integration.replace({ ...input, context: { ...input.context }, texts: input.texts.map(item => ({ ...item })) }, message => {
         if (progressOpen && current() && this.submitting && !this.needsConfirmation) this.reportReplacementProgress(message);
       });
       progressOpen = false;
@@ -935,11 +942,12 @@ export class EditorController {
     if (this.submissionProgress) this.submissionProgress = { ...this.submissionProgress, status: "unknown" };
     this.emit();
   }
-  private async handleReplacementResult(result: ReplaceOutcome) {
-    if (result?.status === "succeeded" && result.recordId) {
+  private async handleReplacementResult(value: unknown) {
+    const result = readReplacementOutcome(value);
+    if (result.status === "succeeded") {
       this.savedRecord = result.recordId; this.submitting = false; this.needsConfirmation = false; this.submission = undefined;
       await this.returnToReview();
-    } else if (result?.status === "failed") this.finishSubmissionFailure(result.message, result.objectId);
+    } else if (result.status === "failed") this.finishSubmissionFailure(result.message, result.objectId);
     else this.awaitReplacementConfirmation();
   }
   async confirmReplacement() {
@@ -959,7 +967,7 @@ export class EditorController {
     this.needsConfirmation = false; this.submissionStage = "正在查询本次替换结果…";
     this.submissionProgress = { ...this.submissionProgress!, status: "querying", waitStartedAt: Date.now() }; this.emit();
     try {
-      const result = await this.integration.confirmResult(submission.submissionId, submission.context);
+      const result = await this.integration.confirmResult(submission.submissionId, { ...submission.context });
       if (current()) await this.handleReplacementResult(result);
     } catch { if (current()) this.awaitReplacementConfirmation(); }
   }
@@ -993,7 +1001,7 @@ export class EditorController {
     finally { if (!this.disposed) { this.busy = false; this.configure(); this.emit(); } }
   }
   finishPreviewSubmission() {
-    if (!this.previewSubmission || this.integration || this.submissionProgress?.status !== "preview_complete") return;
+    if (!previewReplacement || !this.previewSubmission || this.integration || this.submissionProgress?.status !== "preview_complete") return;
     this.previewSubmission.controller.abort(); this.previewSubmission = undefined;
     this.submissionRun++; this.submitting = false; this.needsConfirmation = false; this.submissionStage = ""; this.submissionProgress = undefined;
     this.notice = "演示完成，未保存到任务。当前编辑草稿已保留，可继续编辑。"; this.noticePresentation = "persistent";
@@ -1645,7 +1653,7 @@ export class EditorController {
     const snapshot = this.snapshot(), documentId = this.documentId, revision = this.revision;
     const job = { id: crypto.randomUUID(), controller: new AbortController(), stage: "preparing" as EraseStage, startedAt: Date.now(), illustrative }; this.job = job;
     this.eraseRun?.decision("no_decision", "stale");
-    const context = this.integration?.context;
+    const context = this.sessionContext;
     const run = illustrative ? undefined : this.telemetry.start({ requestId: job.id, documentId, imageSessionId: this.imageSessionId, revision, ...snapshot.size, source: this.source,
       ...(context ? { taskId: context.taskId, imageId: context.imageId } : {}) });
     this.eraseRun = run; this.erasePreviewAttempt = 0;

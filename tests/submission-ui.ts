@@ -50,9 +50,11 @@ try {
   check(status("texts") === "done" && status("image") === "active" && status("saving") === "waiting", "未回报阶段时保留通用等待，不自动推进保存");
   report("后端正在处理本次图片"); await paint();
   check(dialog()!.textContent!.includes("后端正在处理本次图片") && status("saving") === "waiting", "旧版字符串回报兼容，仅更新说明");
-  for (const [stage, text] of [["person", "人物"], ["ocr", "识别"], ["image_text", "符合要求"], ["marking", "保存信息"]] as const) {
+  for (const [stage, text] of [["person", "检测图片中的人物"], ["marking", "处理并验证人物标记"], ["ocr", "识别"], ["image_text", "符合要求"]] as const) {
     report({ stage }); await paint(); check(status("image") === "active" && dialog()!.textContent!.includes(text), `${stage} 回报更新图片检测说明`);
   }
+  report({ stage: "marking", message: "迟到的人物标记阶段" }); await paint();
+  check(dialog()!.textContent!.includes("符合要求") && !dialog()!.textContent!.includes("迟到的人物标记阶段"), "图中文字检测期间忽略迟到的人物标记回报");
   report({ stage: "saving" }); await paint();
   report({ stage: "ocr", message: "过期说明" }); report({ stage: "invalid" } as never); await paint();
   check(status("image") === "done" && status("saving") === "active" && !dialog()!.textContent!.includes("过期说明"), "真实保存阶段才推进，乱序及无效阶段不回退");
@@ -73,12 +75,15 @@ try {
 
   // Real controller with no added text: still checks the composed image.
   const noTextResult = deferred<ReplaceOutcome>(); let imageCalls = 0, textCalls = 0;
+  let reportWithoutText!: Parameters<EditorIntegration["replace"]>[1];
   const test = createEditor({ ...integration, validateTexts: async () => { textCalls++; return { passed: true }; },
-    replace: () => { imageCalls++; return noTextResult.promise; } });
+    replace: (_input, progress) => { imageCalls++; reportWithoutText = progress; return noTextResult.promise; } });
   try {
     await test.editor.initialize(); test.editor.setTool("rect"); test.drag(30, 30, 120, 100);
     const pending = test.confirm(() => test.editor.submitReplacement()); await waitFor(() => imageCalls === 1);
     check(textCalls === 0 && test.state().submissionProgress?.textsSkipped === true && test.state().submissionProgress?.step === "image", "没有新增文字时明确跳过文案，成图检测照常提交");
+    reportWithoutText({ stage: "person" }); reportWithoutText({ stage: "marking" }); reportWithoutText({ stage: "ocr" });
+    check(test.state().submissionProgress?.backendStage === "ocr" && test.state().submissionProgress?.step === "image", "无新增文案也按人物检测、标记处理、OCR 顺序更新进度");
     const timerView = { ...test.state(), submissionProgress: { ...test.state().submissionProgress!, waitStartedAt: Date.now() - 11000 } };
     root.render(createElement(SubmissionDialog, { view: timerView, engine: test.editor })); await paint();
     check(!!dialog()!.querySelector(".submission-elapsed")?.textContent?.includes("11 秒") && status("texts") === "skipped", "超过十秒显示实际已等待秒数，无新增文案标明无需检查");
@@ -86,7 +91,10 @@ try {
     check(bounds.left >= 0 && bounds.right <= innerWidth && dialog()!.scrollWidth <= dialog()!.clientWidth, "进度步骤与提示在当前窗口内无横向溢出");
     root.render(createElement(SubmissionDialog, { view: { ...timerView, needsConfirmation: true, submissionProgress: { ...timerView.submissionProgress, status: "unknown" } }, engine: test.editor })); await paint();
     check(!dialog()!.querySelector(".submission-elapsed"), "结果未知等待用户操作时不继续显示处理计时");
-    root.render(null); await paint(); noTextResult.resolve({ status: "failed", message: "明确失败" }); await pending;
+    root.render(null); await paint();
+    reportWithoutText({ stage: "saving" });
+    check(test.state().submissionProgress?.step === "saving" && !test.state().saved, "OCR 明确无文字时可跳过文本检测进入保存等待，阶段回报不等于保存成功");
+    noTextResult.resolve({ status: "failed", message: "明确失败" }); await pending;
     check(!test.state().submitting && test.state().dirty && !test.state().saved, "明确失败解锁并保留编辑草稿");
   } finally { test.dispose(); }
 
@@ -105,6 +113,12 @@ try {
     if (scenario !== "success") await selectScenario(scenario);
     await start();
     check(dialog()!.textContent!.includes("演示 · 未保存到任务") && host.querySelector<HTMLSelectElement>(".preview-scenario select")!.disabled, `${scenario} 使用实际进度弹窗且明确标识模拟`);
+    if (scenario === "success") {
+      for (const text of ["检测图片中的人物", "处理并验证人物标记", "识别图片中的文字", "检查图中文字"]) {
+        await waitFor(() => !!dialog()?.textContent?.includes(text));
+        check(status("image") === "active" && status("saving") === "waiting", `演示按顺序显示${text}，不提前进入保存`);
+      }
+    }
     if (scenario === "image_blocked" || scenario === "detection_failed") {
       await waitFor(() => !dialog());
       check(!!host.querySelector(".eraser-notice")?.textContent?.includes("尚未替换图片"), `${scenario} 保留草稿并提示未替换`);

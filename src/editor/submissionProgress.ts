@@ -8,12 +8,12 @@ export type SubmissionProgress = {
   backendStage?: ReplacementStage;
 };
 
-const STAGES: ReplacementStage[] = ["person", "ocr", "image_text", "marking", "saving"];
+const STAGES: ReplacementStage[] = ["person", "marking", "ocr", "image_text", "saving"];
 const MESSAGES: Record<ReplacementStage, string> = {
   person: "正在检测图片中的人物…",
+  marking: "正在处理并验证人物标记…",
   ocr: "正在识别图片中的文字…",
   image_text: "正在检查图中文字是否符合要求…",
-  marking: "正在准备图片保存信息…",
   saving: "检查已完成，正在保存图片…",
 };
 

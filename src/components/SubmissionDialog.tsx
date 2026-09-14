@@ -4,10 +4,12 @@ import type { EditorView } from "../types";
 import type { EditorController } from "../editor/EditorController";
 import { submissionSteps } from "../editor/submissionProgress";
 
-export function SubmissionDialog({ view, engine, previewOnly = false }: { view: EditorView; engine: EditorController; previewOnly?: boolean }) {
+export function SubmissionDialog({ view, engine, previewOnly: requestedPreview = false }: { view: EditorView; engine: EditorController; previewOnly?: boolean }) {
+  const previewOnly = (import.meta.env.DEV || import.meta.env.MODE === "demo") && requestedPreview;
   const ref = useRef<HTMLDialogElement>(null), heading = useRef<HTMLHeadingElement>(null), action = useRef<HTMLButtonElement>(null);
   const progress = view.submissionProgress, status = progress?.status;
-  const complete = status === "preview_complete", unknown = status === "unknown", querying = status === "querying";
+  const complete = (import.meta.env.DEV || import.meta.env.MODE === "demo") && status === "preview_complete";
+  const unknown = status === "unknown", querying = status === "querying";
   const reviewFailed = status === "review_failed";
   const waiting = !!progress && (status === "processing" || querying);
   const [now, setNow] = useState(Date.now);
