@@ -7,6 +7,18 @@ const source = await readFile(new URL("../src/editor/submissionProgress.ts", imp
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 const { readReplacementProgress: read, submissionSteps: steps } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
+test("person metadata is processed before OCR, with no-text skipping and late-stage protection", () => {
+  assert.equal(read({ stage: "marking" }, "person")?.stage, "marking");
+  assert.equal(read({ stage: "ocr" }, "marking")?.stage, "ocr", "OCR after metadata must not be treated as a backwards report");
+  assert.equal(read({ stage: "image_text" }, "ocr")?.stage, "image_text");
+  assert.equal(read({ stage: "saving" }, "image_text")?.stage, "saving");
+  assert.equal(read({ stage: "saving" }, "ocr")?.stage, "saving", "a successful OCR with no text can skip text detection");
+  assert.equal(read({ stage: "marking" }, "ocr"), undefined, "late metadata reports cannot replace OCR progress");
+  assert.equal(read({ stage: "person" }, "marking"), undefined);
+  assert.equal(read({ stage: "image_text" }, "saving"), undefined);
+  assert.equal(read({ stage: "marking", message: "正在验证人物标记…" }, "marking")?.message, "正在验证人物标记…");
+});
+
 test("stage callbacks reject malformed and backwards reports; legacy text cannot imply completion", () => {
   for (const value of [null, 1, {}, { stage: "complete" }, { stage: "ocr", message: 12 }, "  "]) assert.equal(read(value), undefined);
   assert.equal(read({ stage: "person" }, "saving"), undefined);

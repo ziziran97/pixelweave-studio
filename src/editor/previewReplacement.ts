@@ -21,11 +21,11 @@ export const previewReplacement = import.meta.env.DEV || import.meta.env.MODE ==
   async function run(scenario: PreviewReplacementScenario, report: (value: ReplacementProgress) => void, signal: AbortSignal): Promise<PreviewOutcome> {
     if (scenario === "no_progress") { await wait(2600, signal); return "completed"; }
     report({ stage: "person" }); await wait(scenario === "slow" ? 12000 : 850, signal);
+    report({ stage: "marking" }); await wait(450, signal);
     report({ stage: "ocr" }); await wait(650, signal);
     report({ stage: "image_text" }); await wait(900, signal);
     if (scenario === "image_blocked") return { message: "演示：图中文字未通过检查（模拟问题词：示例问题词）。尚未替换图片，编辑内容已保留。" };
     if (scenario === "detection_failed") return { message: "演示：图中文字检测服务暂不可用。尚未替换图片，编辑内容已保留，请稍后重试。" };
-    report({ stage: "marking" }); await wait(450, signal);
     report({ stage: "saving" }); await wait(850, signal);
     return scenario === "unknown" ? "unknown" : "completed";
   }

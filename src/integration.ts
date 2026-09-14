@@ -1,7 +1,14 @@
 import type { EraseTelemetryOptions } from "./telemetry";
 export type { EraseTelemetryEvent, EraseTelemetryOptions } from "./telemetry";
 /** Host adapter. The host owns authorization, detection, durable saving and review refresh. */
-export type ImageContext = { taskId: string; imageId: string; baseRecordId?: string };
+export type ImageContext = {
+  taskId: string; imageId: string;
+  /** Actual system base image record; absent when replacing from a local upload. */
+  baseRecordId?: string;
+  /** Opaque version of the target at opening, independent of the working base.
+   * Optional for legacy hosts; M-37218 hosts must supply and enforce it, including first replacements. */
+  targetVersion?: string;
+};
 export type AddedText = { id: string; text: string };
 export type TextIssue = { objectId: string; words: string[] };
 export type TextCheck = { passed: true } | { passed: false; message: string; objectId?: string; issues?: TextIssue[] };
@@ -42,12 +49,29 @@ export type ReplaceOutcome =
   | { status: "succeeded"; recordId: string }
   | { status: "failed"; message: string; objectId?: string }
   | { status: "pending" };
+
+/** Both replacement and query receipts cross a runtime boundary; types alone are not validation. */
+export function readReplacementOutcome(value: unknown): ReplaceOutcome {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { status: "pending" };
+  const result = value as Record<string, unknown>;
+  if (result.status === "succeeded" && typeof result.recordId === "string" && result.recordId.trim()) {
+    return { status: "succeeded", recordId: result.recordId.trim() };
+  }
+  if (result.status === "failed") {
+    const message = typeof result.message === "string" && result.message.trim() ? result.message.trim() : "替换未成功，编辑内容已保留，请重试";
+    const objectId = typeof result.objectId === "string" ? result.objectId.trim() : "";
+    return { status: "failed", message, ...(objectId ? { objectId } : {}) };
+  }
+  return { status: "pending" };
+}
 export type ReplacementInput = {
   submissionId: string; context: ImageContext; image: Blob; width: number; height: number;
   source: "online" | "upload"; texts: AddedText[];
 };
-/** Real backend stages; callers without stage information may keep reporting a plain message. */
-export type ReplacementStage = "person" | "ocr" | "image_text" | "marking" | "saving";
+/** Backend stage order: person -> XMP processing/verification -> OCR -> text check -> saving.
+ * Report OCR only after metadata succeeds; successful OCR with no text may skip image_text.
+ * These are progress reports, not proof of successful checks. Plain messages remain supported. */
+export type ReplacementStage = "person" | "marking" | "ocr" | "image_text" | "saving";
 export type ReplacementProgress = { stage: ReplacementStage; message?: string };
 export type EditorIntegration = {
   /** Optional metadata-only receiver. Host owns transport, deduplication and aggregation. */

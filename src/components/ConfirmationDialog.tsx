@@ -10,7 +10,8 @@ export const CONFIRMATION_COPY: Record<ConfirmationKind, { title: string; messag
   switch: { title: "切换编辑图片？", message: "当前未保存的编辑内容和待采用结果将丢失。", cancel: "取消", accept: "切换图片" },
 };
 
-export function ConfirmationDialog({ confirmation, answer, retryPreview, previewOnly = false }: { confirmation: EditorConfirmation; previewOnly?: boolean; answer: (id: string, accepted: boolean) => void; retryPreview?: (id: string) => void }) {
+export function ConfirmationDialog({ confirmation, answer, retryPreview, previewOnly: requestedPreview = false }: { confirmation: EditorConfirmation; previewOnly?: boolean; answer: (id: string, accepted: boolean) => void; retryPreview?: (id: string) => void }) {
+  const previewOnly = (import.meta.env.DEV || import.meta.env.MODE === "demo") && requestedPreview;
   const dialog = useRef<HTMLDialogElement>(null), cancel = useRef<HTMLButtonElement>(null), answered = useRef(false);
   const copy = CONFIRMATION_COPY[confirmation.kind];
   const [imageState, setImageState] = useState<{ url: string; loaded: boolean }>();
